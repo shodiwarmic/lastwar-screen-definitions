@@ -30,3 +30,11 @@ screens:
     # Rationale: Broadest match. Catches any screenshot that survived the
     # strength and weekly filters. The active day tab is determined by the
     # tabs.active_indicator after the layout is confirmed.
+
+  - id: season_contribution
+    file: screens/season_contribution.yaml
+    priority: 4
+    # Rationale: Season Contribution Ranking screens are always uploaded
+    # with an explicit category parameter — auto-detection is not used.
+    # Registered here so get_definition_for_category() resolves row
+    # clustering config for mutual_assistance / siege / rare_soil_war / defeat.
