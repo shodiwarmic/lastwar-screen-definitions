@@ -45,8 +45,8 @@ tabs:
   items:
     - {id: power,           category: power,           signals: ["Power"],             x_hint: 0.15}
     - {id: kills,           category: kills,           signals: ["Kills"],             x_hint: 0.50}
-    - {id: donation_daily,  category: donation_daily,  signals: ["Donation", "Daily"],  x_hint: 0.85}
-    - {id: donation_weekly, category: donation_weekly, signals: ["Donation", "Weekly"], x_hint: 0.85}
+    - {id: donation_daily,  category: donation_daily,  signals: ["Daily"],  x_hint: 0.20}
+    - {id: donation_weekly, category: donation_weekly, signals: ["Weekly"], x_hint: 0.42}
 
 columns:
   - {id: rank,  type: ignore, x_min: 0.00, x_max: 0.15}

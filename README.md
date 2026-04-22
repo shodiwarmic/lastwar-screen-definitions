@@ -91,8 +91,8 @@ identification:
 |---|---|
 | `page_signals` | OCR text tokens that confirm this is the right screen. All words of any signal must appear in the OCR output for a match. |
 | `negative_signals` | Tokens whose presence rules this screen out (e.g. day abbreviations rule out Weekly when checking Daily). |
-| `pre_ocr_hint` | Pass 1 colour-sampling hint. Sample the pixel at `(x_hint, y_hint)` and check whether it matches `color`. If it does, this screen is likely active. |
-| `pre_ocr_hint.confidence` | Confidence score returned on a Pass 1 match. |
+| `pre_ocr_hint` | Fast single-pixel colour check run **before** OCR. The service samples the pixel at `(x_hint * width, y_hint * height)` and checks it against the HSV range. A frame is skipped entirely if **every** layout with a `pre_ocr_hint` fails its check. Layouts with `pre_ocr_hint: null` are never skipped — they always allow OCR to proceed. |
+| `pre_ocr_hint.confidence` | Reserved for future use. Currently unused; include it in new definitions for forward compatibility. |
 
 **`color`**
 
@@ -121,6 +121,7 @@ Boundary anchors locate the top and bottom of the player list by searching for O
 |---|---|
 | `signals` | One or more OCR text strings that mark this boundary. |
 | `search_region` | Fraction of the image height to scan. Narrows the search to avoid false matches. |
+| `anchor_offset` | *(Parsed but not yet implemented — reserved for future use.)* Intended to shift the boundary by a fraction of image height relative to the matched line's edge. Currently the boundary is always set to the exact bottom of the header line / top of the footer line. |
 
 ---
 
@@ -130,7 +131,7 @@ Describes the tab bar. Required for screens with multiple data views (all three 
 
 ```yaml
 tabs:
-  search_region: {y_min: 0.00, y_max: 0.30}
+  search_region: {y_min: 0.00, y_max: 0.30}  # both bounds enforced
   y_hint: 0.20
   active_indicator:
     strategy: color_fraction   # or "brightest"
@@ -152,19 +153,18 @@ tabs:
 | `strategy` | `color_fraction` — active tab has a solid colour (e.g. orange) covering ≥ `min_fraction` of its crop. `brightest` — active tab has a higher V-channel brightness than inactive tabs (used for day tabs which are white, not orange). |
 | `min_fraction` | (color_fraction only) Minimum fraction of pixels that must match `color` to call a tab active. |
 | `min_gap` | (brightest only) Minimum brightness difference (V channel, 0–1) between the brightest and second-brightest tab to declare a winner. |
-| `color` | Colour definition for `color_fraction` detection. |
+| `color` | *(Parsed but not yet implemented — reserved for future use.)* Intended to supply per-layout HSV thresholds for tab active-indicator detection. Currently the service uses hard-coded RGB thresholds for orange and white detection. |
 | `bbox_padding_fraction` | Pixels to expand around each tab's OCR bounding box before sampling, expressed as a fraction of image width. Ensures the tab background rather than the text glyph is sampled. |
 
 **Tab items**
 
 | Field | Description |
 |---|---|
-| `id` | Internal identifier. |
-| `category` | Output key returned by the classifier (e.g. `"kills"`, `"donation_daily"`). |
-| `signals` | OCR text tokens for this tab. The **first** signal is the top-level tab label. A **second** signal marks a sub-tab (e.g. `["Donation", "Daily"]` means the "Daily" sub-tab under the "Donation" top tab). |
-| `x_hint` | Horizontal sample position for Pass 1 colour detection, as a fraction of image width. |
-
-**Sub-tabs** — when multiple items share the same first signal, they represent sub-tabs of a single top-level tab. The classifier detects the active top-level tab by colour, then distinguishes sub-tabs using the `brightest` strategy on the second-signal labels.
+| `id` | Internal identifier. Only used for logging; the classifier returns `category` as the output key. |
+| `category` | Output key returned by the classifier and stored as the `day` value in the database (e.g. `"kills"`, `"donation_daily"`). Falls back to `id` when blank. |
+| `signals` | **Alternative** OCR text tokens for this tab — any one signal matching is sufficient. Each signal is a space-separated sequence of words that must ALL appear in the OCR line for that signal to match (e.g. `["Weekly Rank"]` requires both "Weekly" and "Rank" to be present). Different signals on the same item are OR-ed together. |
+| `x_hint` | Horizontal centre of the tab button as a fraction of image width. Used to select the correct OCR element when multiple tab labels appear on one line, and as the colour-sample centre for active-tab detection. |
+| `group` | Non-empty only on layouts with multiple independent tab rows (e.g. `alliance_contribution` has `category` and `period` groups). The service picks one winner per group and joins them with `_` (e.g. `"siege_daily"`). Omit for single-row tab layouts. |
 
 ---
 
@@ -207,12 +207,14 @@ row_clustering:
 
 | Field | Description |
 |---|---|
-| `strategy` | `score_anchored` — anchor each row on its score token, collect name tokens within the band above. Prevents alliance subtitle lines from merging into the player row. |
-| `score_anchored.up_band_fraction` | Fraction of image height to search upward from the score for name tokens. |
-| `score_anchored.down_band_fraction` | Fraction of image height to search downward (small — just handles slight vertical misalignment). |
+| `strategy` | `score_anchored` — for each score token found in the score column, collect name tokens within a vertical band above it. Prevents footer rows (e.g. "Your Alliance / [Tag] AllianceName") from being captured because they have no associated score token. Name lines with no score anchor undergo crash-token recovery. `y_proximity` (or any other value) — fallback: group all OCR lines by vertical proximity then extract columns from each group. |
+| `score_anchored.up_band_fraction` | Fraction of **image height** to search upward from the score token's top edge for associated name tokens. |
+| `score_anchored.down_band_fraction` | Fraction of image height to search downward from the score token's bottom edge (small — handles slight vertical misalignment between name and score OCR boxes). |
+| `y_proximity.tolerance_fraction` | Fraction of image height used as the vertical tolerance when grouping OCR lines into the same player row. |
+| `y_proximity.min_tolerance_px` | Minimum tolerance in pixels (prevents the tolerance from being too tight on small screens). |
 | `min_score` | Minimum integer value for a token to be treated as a score. Filters out rank numbers (1–100) and OCR noise. |
-| `word_gap_fraction` | Gap between adjacent OCR bounding boxes, relative to image width, above which a space is inserted between name tokens. |
-| `min_word_gap_px` | Absolute minimum gap in pixels. Overrides `word_gap_fraction` on narrow images. |
+| `word_gap_fraction` | Horizontal gap between adjacent OCR bounding boxes, relative to image width, **above which** a space is inserted between name tokens. Gaps at or below this threshold result in direct concatenation (handles OCR splitting a single word across two boxes). |
+| `min_word_gap_px` | Absolute minimum threshold in pixels, used when `word_gap_fraction * image_width` would be smaller (narrow screens). The effective threshold is `max(word_gap_fraction * width, min_word_gap_px)`. |
 
 ---
 

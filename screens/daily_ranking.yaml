@@ -13,6 +13,7 @@ identification:
   negative_signals:
     - "Strength Ranking"
     - "STRENGTH"
+    - "Alliance Contribution"
   pre_ocr_hint:
     x_hint: 0.35
     y_hint: 0.20

@@ -31,10 +31,10 @@ screens:
     # strength and weekly filters. The active day tab is determined by the
     # tabs.active_indicator after the layout is confirmed.
 
-  - id: season_contribution
+  - id: alliance_contribution
     file: screens/season_contribution.yaml
     priority: 4
-    # Rationale: Season Contribution Ranking screens are always uploaded
-    # with an explicit category parameter — auto-detection is not used.
-    # Registered here so get_definition_for_category() resolves row
-    # clustering config for mutual_assistance / siege / rare_soil_war / defeat.
+    # Rationale: "Alliance Contribution" in the page title is unique to this
+    # screen. daily_ranking and weekly_ranking carry "Alliance Contribution"
+    # as a negative_signal so they never fire on this screen. Checked last
+    # since it is the most niche ranking type.

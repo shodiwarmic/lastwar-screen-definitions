@@ -1,23 +1,26 @@
-id: season_contribution
-version: 1
-name: Season Contribution Ranking
+id: alliance_contribution
+version: 2
+name: Alliance Contribution Ranking
 description: >
-  Season Contribution leaderboard covering four war-event categories:
-  Mutual Assistance, Siege, Rare Soil War, and Defeat. Each tab shows
-  Daily, Weekly, and Season Total sub-rankings. The category is always
-  provided explicitly by the caller; auto-detection is not used.
+  Alliance member leaderboard for four war-event categories:
+  Mutual Assistance, Siege, Rare Soil War, and Defeat.
+  Two independent tab rows: the category row (full orange background on
+  the active button) and the time-period row (Daily Ranking / Weekly
+  Ranking / Season Total Ranking, white/bright text when active vs gray
+  when inactive). The active combination is detected by colour-sampling
+  each row independently and joining the winners as {category}_{period}.
 
 identification:
   page_signals:
-    - "Season Contribution Ranking"
-    - "SEASON CONTRIBUTION"
+    - "Alliance Contribution"
+    - "ALLIANCE CONTRIBUTION"
   negative_signals: []
   pre_ocr_hint: null
 
 boundaries:
   header:
     signals: ["Ranking", "Name", "Points"]
-    search_region: {y_min: 0.0, y_max: 0.40}
+    search_region: {y_min: 0.15, y_max: 0.30}
   footer:
     signals: []
     search_region: {y_min: 0.60, y_max: 1.0}
@@ -27,8 +30,20 @@ chrome:
   bottom_fraction: 0.12
 
 tabs:
+  # y_max raised to 0.30: the period tab row sits at ~y=0.22–0.26, just below the
+  # category row (~y=0.18–0.22). The old 0.22 cutoff was clipping the period tabs.
   search_region: {y_min: 0.00, y_max: 0.30}
-  y_hint: 0.18
+  y_hint: 0.20
+  # Two independent detection groups. The service picks one winner per group
+  # using that group's colour strategy, then joins them as category_period.
+  groups:
+    # Category row: active button has a full orange background.
+    category: {strategy: color_fraction, min_fraction: 0.10}
+    # Period row: active tab text is white; inactive tab text is gray.
+    # "brightest" samples the text region for each tab and picks the most white.
+    # min_fraction is low (0.02) because period tabs have text only — not a solid
+    # colour fill — so white pixel coverage is typically only 2–8% of the bbox area.
+    period:   {strategy: brightest,      min_fraction: 0.02}
   active_indicator:
     strategy: color_fraction
     min_fraction: 0.10
@@ -37,22 +52,25 @@ tabs:
       hsv_override: {h_min: 0.014, h_max: 0.153, s_min: 0.40, v_min: 0.55}
     bbox_padding_fraction: 0.007
   items:
-    # Mutual Assistance — 3 time-period sub-tabs
-    - {id: mutual_assistance_daily,   category: mutual_assistance_daily,   signals: ["Mutual", "Assistance", "Daily"],          x_hint: 0.13}
-    - {id: mutual_assistance_weekly,  category: mutual_assistance_weekly,  signals: ["Mutual", "Assistance", "Weekly"],         x_hint: 0.13}
-    - {id: mutual_assistance_season,  category: mutual_assistance_season,  signals: ["Mutual", "Assistance", "Season"],         x_hint: 0.13}
-    # Siege — 3 time-period sub-tabs
-    - {id: siege_daily,               category: siege_daily,               signals: ["Siege", "Daily"],                         x_hint: 0.37}
-    - {id: siege_weekly,              category: siege_weekly,              signals: ["Siege", "Weekly"],                        x_hint: 0.37}
-    - {id: siege_season,              category: siege_season,              signals: ["Siege", "Season"],                        x_hint: 0.37}
-    # Rare Soil War — 3 time-period sub-tabs
-    - {id: rare_soil_war_daily,       category: rare_soil_war_daily,       signals: ["Rare", "Soil", "War", "Daily"],           x_hint: 0.62}
-    - {id: rare_soil_war_weekly,      category: rare_soil_war_weekly,      signals: ["Rare", "Soil", "War", "Weekly"],          x_hint: 0.62}
-    - {id: rare_soil_war_season,      category: rare_soil_war_season,      signals: ["Rare", "Soil", "War", "Season"],          x_hint: 0.62}
-    # Defeat — 3 time-period sub-tabs
-    - {id: defeat_daily,              category: defeat_daily,              signals: ["Defeat", "Daily"],                        x_hint: 0.87}
-    - {id: defeat_weekly,             category: defeat_weekly,             signals: ["Defeat", "Weekly"],                       x_hint: 0.87}
-    - {id: defeat_season,             category: defeat_season,             signals: ["Defeat", "Season"],                       x_hint: 0.87}
+    # ── Category tabs — full orange background when active ──────────────────
+    - {id: mutual_assistance, group: category, category: mutual_assistance,
+       signals: ["Mutual Assistance", "Mutual"], x_hint: 0.12}
+    - {id: siege,             group: category, category: siege,
+       signals: ["Siege"],                      x_hint: 0.34}
+    - {id: rare_soil_war,     group: category, category: rare_soil_war,
+       signals: ["Rare Soil War", "Rare"],      x_hint: 0.54}
+    - {id: defeat,            group: category, category: defeat,
+       signals: ["Defeat"],                     x_hint: 0.73}
+    # ── Time-period tabs — white text when active, gray when inactive ────────
+    # All three labels appear on a single OCR line. The x_hint-centred sampling
+    # window isolates each tab so the brightest (active) one is correctly chosen.
+    # x_hints measured from device screenshots: daily≈0.13, weekly≈0.38, season≈0.64.
+    - {id: daily,  group: period, category: daily,
+       signals: ["Daily Ranking",        "Daily"],         x_hint: 0.13}
+    - {id: weekly, group: period, category: weekly,
+       signals: ["Weekly Ranking",       "Weekly"],        x_hint: 0.38}
+    - {id: season, group: period, category: season,
+       signals: ["Season Total Ranking", "Season Total"],  x_hint: 0.64}
 
 columns:
   - {id: rank,  type: ignore, x_min: 0.00, x_max: 0.15}

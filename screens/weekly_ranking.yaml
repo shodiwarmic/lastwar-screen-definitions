@@ -9,7 +9,7 @@ identification:
   page_signals:
     - "Weekly Rank"
     - "Weekly Ranking"
-  negative_signals: ["Mon.", "Tues.", "Wed.", "Thur.", "Fri.", "Sat."]
+  negative_signals: ["Mon.", "Tues.", "Wed.", "Thur.", "Fri.", "Sat.", "Alliance Contribution"]
   pre_ocr_hint:
     x_hint: 0.65
     y_hint: 0.15
