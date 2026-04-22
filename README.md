@@ -178,6 +178,12 @@ tabs:
 
 Maps each `tab_item.group` name to its own active-indicator config (`strategy`, `min_fraction`). Required when any `tab_item` has a non-empty `group`. The top-level `tabs.active_indicator` is still parsed but only used for groups not listed here. Used by `season_contribution.yaml` to detect the active category (orange-filled) and period (brightest white text) tabs independently.
 
+**When `tabs.groups` applies — and when it doesn't.** Use `groups` only when the wire-format category is a uniform `{group_winner}_{group_winner}` join across every state of the screen. `season_contribution` qualifies — every state emits `{category}_{period}` (e.g. `siege_daily`, `mutual_assistance_season`).
+
+Daily VS / Weekly VS, despite having the same physical two-row UI as Season Contribution (period row + day row), is **intentionally** modelled as two separate single-row screens (`daily_ranking.yaml` + `weekly_ranking.yaml`), disambiguated by `negative_signals`. The reason: the category emission rule isn't uniform — the Daily Rank state emits the day name alone (`friday`), while the Weekly Rank state emits the period name alone (`weekly`), with no day component. A `groups`-based model would either require a schema extension (e.g. conditional groups, per-winner category overrides) or force a backend migration to `daily_friday`/`weekly_*` keys. The two-screen approach also leverages a real UI signal: when Weekly is active, the day row disappears, which `negative_signals: ["Mon.", "Tues.", ...]` correctly rejects.
+
+Rule of thumb: if every state of a multi-row screen emits a category that is exactly `{winner_a}_{winner_b}`, use `tabs.groups`. Otherwise model each state as its own screen and disambiguate via `negative_signals`.
+
 ---
 
 ### `columns`
