@@ -1,0 +1,74 @@
+id: strength_donation
+version: 1
+name: Strength Ranking — Donation
+description: >
+  Strength Ranking screen with the Donation row-1 tab active. A second
+  sub-tab row is visible (Daily | Weekly); each maps to its own backend
+  category — donation_daily or donation_weekly.
+  See README.md "Multi-row tab patterns" — Pattern B sibling to
+  strength_metrics.yaml.
+
+identification:
+  page_signals:
+    # Multi-word signals require ALL words to appear (Consumer Contract).
+    # These fire only when Strength Ranking is on screen AND both Daily
+    # and Weekly sub-tab labels are visible — i.e. the Donation row is
+    # open. Listing both casings handles the OCR rendering of the bold
+    # all-caps title bar token.
+    - "Strength Daily Weekly"
+    - "STRENGTH Daily Weekly"
+  negative_signals:
+    - "Daily Rank"
+    - "Weekly Rank"
+    - "Alliance Contribution"
+    - "Mon."
+    - "Tues."
+    - "Wed."
+    - "Thur."
+    - "Fri."
+    - "Sat."
+  # No pre_ocr_hint — the Donation row-1 tab sits at the same x position
+  # as Power/Kills, so a single-pixel orange sample can't distinguish.
+  # Pass-1 colour classification is skipped; OCR-text classification handles it.
+  pre_ocr_hint: null
+
+boundaries:
+  header:
+    signals: ["Commander", "Power", "Kills", "Donation"]
+    search_region: {y_min: 0.0, y_max: 0.40}
+  footer:
+    signals: ["Your Alliance"]
+    search_region: {y_min: 0.60, y_max: 1.0}
+
+chrome:
+  top_fraction: 0.22
+  bottom_fraction: 0.12
+
+tabs:
+  # Sub-tab row sits below the row-1 metric tabs. y_hint is best-effort —
+  # tune against a real Strength → Donation screenshot when one is captured.
+  search_region: {y_min: 0.00, y_max: 0.30}
+  y_hint: 0.25
+  active_indicator:
+    strategy: color_fraction
+    min_fraction: 0.10
+    color:
+      named: orange
+      hsv_override: {h_min: 0.014, h_max: 0.153, s_min: 0.40, v_min: 0.55}
+    bbox_padding_fraction: 0.007
+  items:
+    - {id: donation_daily,  category: donation_daily,  signals: ["Daily"],  x_hint: 0.20}
+    - {id: donation_weekly, category: donation_weekly, signals: ["Weekly"], x_hint: 0.42}
+
+columns:
+  - {id: rank,  type: ignore, x_min: 0.00, x_max: 0.15}
+  - {id: name,  type: name,   x_min: 0.15, x_max: 0.60}
+  - {id: score, type: score,  x_min: 0.60, x_max: 1.00}
+
+row_clustering:
+  strategy: score_anchored
+  score_anchored: {up_band_fraction: 0.021, down_band_fraction: 0.002}
+  y_proximity: {tolerance_fraction: 0.02, min_tolerance_px: 20}
+  min_score: 1000
+  word_gap_fraction: 0.015
+  min_word_gap_px: 8

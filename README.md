@@ -12,7 +12,8 @@ meta-schema.json              JSON Schema validating every definition file
 screens/
   daily_ranking.yaml          Daily Rank (Mon–Sat VS points)
   weekly_ranking.yaml         Weekly Rank (7-day cumulative)
-  strength_ranking.yaml       Strength Ranking (Power / Kills / Donation)
+  strength_metrics.yaml       Strength Ranking — Power / Kills row-1 tabs
+  strength_donation.yaml      Strength Ranking — Donation row-1 tab + Daily/Weekly sub-tabs
   season_contribution.yaml    Season Contribution Ranking (Mutual Assistance / Siege / Rare Soil War / Defeat)
 ```
 
@@ -25,18 +26,21 @@ Lists every screen in the order adapters must test them. **Priority order matter
 ```yaml
 schema_version: 1
 screens:
-  - id: strength_ranking
-    file: screens/strength_ranking.yaml
+  - id: strength_donation
+    file: screens/strength_donation.yaml
     priority: 1
+  - id: strength_metrics
+    file: screens/strength_metrics.yaml
+    priority: 2
   - id: weekly_ranking
     file: screens/weekly_ranking.yaml
-    priority: 2
+    priority: 3
   - id: daily_ranking
     file: screens/daily_ranking.yaml
-    priority: 3
-  - id: season_contribution
-    file: screens/season_contribution.yaml
     priority: 4
+  - id: alliance_contribution
+    file: screens/season_contribution.yaml
+    priority: 5
 ```
 
 | Field | Description |
@@ -180,9 +184,14 @@ Maps each `tab_item.group` name to its own active-indicator config (`strategy`, 
 
 **When `tabs.groups` applies — and when it doesn't.** Use `groups` only when the wire-format category is a uniform `{group_winner}_{group_winner}` join across every state of the screen. `season_contribution` qualifies — every state emits `{category}_{period}` (e.g. `siege_daily`, `mutual_assistance_season`).
 
-Daily VS / Weekly VS, despite having the same physical two-row UI as Season Contribution (period row + day row), is **intentionally** modelled as two separate single-row screens (`daily_ranking.yaml` + `weekly_ranking.yaml`), disambiguated by `negative_signals`. The reason: the category emission rule isn't uniform — the Daily Rank state emits the day name alone (`friday`), while the Weekly Rank state emits the period name alone (`weekly`), with no day component. A `groups`-based model would either require a schema extension (e.g. conditional groups, per-winner category overrides) or force a backend migration to `daily_friday`/`weekly_*` keys. The two-screen approach also leverages a real UI signal: when Weekly is active, the day row disappears, which `negative_signals: ["Mon.", "Tues.", ...]` correctly rejects.
+Two existing screens have multi-row UIs but *non-uniform* category emission, and are therefore intentionally split into separate screen YAMLs disambiguated by `negative_signals`:
 
-Rule of thumb: if every state of a multi-row screen emits a category that is exactly `{winner_a}_{winner_b}`, use `tabs.groups`. Otherwise model each state as its own screen and disambiguate via `negative_signals`.
+- **Daily VS / Weekly VS** (`daily_ranking.yaml` + `weekly_ranking.yaml`) — Daily emits a day name alone (`friday`); Weekly emits the period name alone (`weekly`). No `_period` component on either side. Disambiguated by the day-tab row disappearing when Weekly is active (`negative_signals: ["Mon.", "Tues.", ...]` on `weekly_ranking`).
+- **Strength Ranking** (`strength_metrics.yaml` + `strength_donation.yaml`) — Power and Kills emit single names (`power`, `kills`); Donation opens a sub-tab row that emits `donation_daily` or `donation_weekly`. Disambiguated by the sub-tab row appearing only when Donation is active (`negative_signals: ["Daily Weekly"]` on `strength_metrics` rejects the Donation state because both labels appear together; `page_signals: ["Strength Daily Weekly"]` on `strength_donation` requires both to appear).
+
+A `groups`-based model for either case would require a schema extension (conditional groups, per-winner category overrides) or a backend migration that re-keys established categories. The split-screen pattern leverages real UI signals (whichever sub-row the game shows) and uses only existing schema features.
+
+**Rule of thumb:** if *every* state of a multi-row screen emits a category that is exactly `{winner_a}_{winner_b}`, use `tabs.groups`. Otherwise model each row-1 state as its own screen and disambiguate via `negative_signals` on the labels of the conditional second row.
 
 ---
 
@@ -279,7 +288,7 @@ Consumers choose between two equivalent payload shapes — both are accepted by 
 }
 ```
 
-The consumer picks `candidates[0]` (rightmost split, smallest score) as the default and emits all valid splits for the backend to disambiguate against the full alias engine. `candidates` is omitted when the row had no crash-token ambiguity. **`category_key` is the screen `id` for single-tab screens (e.g. `"strength_ranking"`); otherwise the tab `category` (e.g. `"friday"`, `"siege_daily"`).**
+The consumer picks `candidates[0]` (rightmost split, smallest score) as the default and emits all valid splits for the backend to disambiguate against the full alias engine. `candidates` is omitted when the row had no crash-token ambiguity. **`category_key` is always the active tab's `category` field** (e.g. `"friday"`, `"weekly"`, `"power"`, `"donation_daily"`, `"siege_daily"`) — never the screen `id` itself, since every shipped screen has at least one tab.
 
 **Shape B — client-resolved** (used by `lastwar-android-scanner`):
 
@@ -335,6 +344,24 @@ When changing the schema or adding a screen:
 The `id` field in each screen YAML (e.g. `daily_ranking`, `alliance_contribution`) is the canonical category key the backend stores in `vs_points` / `power_history` / equivalent tables. Adding a new screen requires either matching an existing category or coordinating a new one with `lastwar-alliance-manager` in the same merge cycle.
 
 For multi-tab screens, the wire-format category is the tab winner's `category` (e.g. `"friday"`, `"siege_daily"`), not the screen `id`. The backend uses the tab category to look up the column to upsert.
+
+### Cross-pair classification audit
+
+When adding a new screen, walk every existing screen and ask: *if the new screen's frame appears, can any of these other screens falsely match it via shared signals?* Add `negative_signals` until the answer is no. Conversely, ask: *can the new screen falsely match a frame from any of these other screens?* Add `negative_signals` to the new screen until the answer is no. Run the same audit in reverse for each existing screen against the new one.
+
+The current state, with vulnerable cells marked **❌** (only the explicit `negative_signals` listed under the screen are considered — catalog priority alone is fragile because OCR noise can break the priority assumption):
+
+| Checked ↓  /  Real screen → | Strength Power/Kills | Strength Donation | Daily VS | Weekly VS | Alliance Contribution |
+|---|---|---|---|---|---|
+| **strength_donation** (P1) | ✅ "Daily Weekly" combo not present | ✅ matches | ✅ day-name negs reject | ✅ "Weekly Rank" neg rejects | ✅ "Alliance Contribution" neg rejects |
+| **strength_metrics** (P2) | ✅ matches | ✅ "Daily Weekly" combo neg rejects | ✅ day-name negs reject | ✅ "Weekly Rank" neg rejects | ✅ "Alliance Contribution" neg rejects |
+| **weekly_ranking** (P3) | ✅ "Strength" neg rejects | ✅ "Strength" neg rejects (and "Weekly Rank" page_signal not present anyway) | ✅ day-name negs reject | ✅ matches | ✅ "Alliance Contribution" neg rejects |
+| **daily_ranking** (P4) | ✅ "Daily Rank" not present (only "Daily" sub-tab) | ✅ "Daily Rank" not present | ✅ matches | ⚠ no `negative_signal` rejects, but `weekly_ranking` (P3) wins by priority | ✅ "Alliance Contribution" neg rejects |
+| **alliance_contribution** (P5) | ✅ "Alliance Contribution" text not present | ✅ same | ✅ same | ✅ same | ✅ matches |
+
+The single ⚠ cell (`daily_ranking` on a Weekly VS frame) is *covered by priority order, not by `negative_signals`*: weekly_ranking is checked first and matches cleanly on Weekly VS, so daily_ranking never gets evaluated. It would still match if weekly_ranking failed for some unrelated reason (e.g. OCR misread "Weekly Rank") — leaving the priority defence as a known soft spot worth recording rather than masking with a `negative_signal` that would also reject Daily VS (where "Weekly Rank" is also visible as the inactive period tab).
+
+When you add a new screen, copy this table and add a row + column for it. Every cell in the new row and new column must end ✅ before merging.
 
 ---
 

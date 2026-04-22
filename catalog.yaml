@@ -9,32 +9,41 @@
 schema_version: 1
 
 screens:
-  - id: strength_ranking
-    file: screens/strength_ranking.yaml
+  - id: strength_donation
+    file: screens/strength_donation.yaml
     priority: 1
-    # Rationale: "Strength Ranking" and its accompanying column headers
-    # (Power/Kills/Donation) are unique to this screen. Check first to
-    # prevent the word "Power" from ever reaching the daily/weekly matchers.
+    # Rationale: more specific than strength_metrics — its multi-word
+    # page_signal "Strength Daily Weekly" requires the Donation sub-tab
+    # row to be visible. Checked first so strength_metrics's broader
+    # "Strength Ranking" page_signal cannot pre-empt it on a frame where
+    # both could match.
+
+  - id: strength_metrics
+    file: screens/strength_metrics.yaml
+    priority: 2
+    # Rationale: handles the Power and Kills row-1 tabs. Shares the
+    # "Strength Ranking" page_signal with strength_donation but rejects
+    # the Donation+sub-tab state via the "Daily Weekly" negative_signal.
 
   - id: weekly_ranking
     file: screens/weekly_ranking.yaml
-    priority: 2
-    # Rationale: "Weekly Rank" is distinctive, but the Weekly tab label also
-    # appears as text on Daily Rank screens. The weekly definition uses a
-    # negative_signal ("Mon.", "Tues.", etc.) to reject screenshots that are
-    # actually Daily screens. Check after strength_ranking, before daily.
+    priority: 3
+    # Rationale: "Weekly Rank" is distinctive, but the Weekly tab label
+    # also appears as text on Daily Rank screens. The weekly definition
+    # uses negative_signals ("Mon.", "Tues.", etc.) to reject screenshots
+    # that are actually Daily screens.
 
   - id: daily_ranking
     file: screens/daily_ranking.yaml
-    priority: 3
-    # Rationale: Broadest match. Catches any screenshot that survived the
-    # strength and weekly filters. The active day tab is determined by the
+    priority: 4
+    # Rationale: broadest match. Catches any frame that survived the
+    # strength and weekly filters. The active day tab is determined by
     # tabs.active_indicator after the layout is confirmed.
 
   - id: alliance_contribution
     file: screens/season_contribution.yaml
-    priority: 4
-    # Rationale: "Alliance Contribution" in the page title is unique to this
-    # screen. daily_ranking and weekly_ranking carry "Alliance Contribution"
-    # as a negative_signal so they never fire on this screen. Checked last
+    priority: 5
+    # Rationale: "Alliance Contribution" in the page title is unique to
+    # this screen. The other screens carry "Alliance Contribution" as a
+    # negative_signal so they never fire on this screen. Checked last
     # since it is the most niche ranking type.

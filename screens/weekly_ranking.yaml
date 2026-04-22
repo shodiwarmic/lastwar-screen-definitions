@@ -1,5 +1,5 @@
 id: weekly_ranking
-version: 1
+version: 2
 name: Weekly Ranking
 description: >
   Alliance VS points leaderboard showing the 7-day cumulative total.
@@ -9,7 +9,20 @@ identification:
   page_signals:
     - "Weekly Rank"
     - "Weekly Ranking"
-  negative_signals: ["Mon.", "Tues.", "Wed.", "Thur.", "Fri.", "Sat.", "Alliance Contribution"]
+  # Day-tab labels mean we're on Daily VS, not Weekly VS.
+  # "Strength" / "STRENGTH" reject the Strength → Donation state, where
+  # the "Weekly" sub-tab label combined with the screen-title "RANKING"
+  # would otherwise look like a Weekly Rank match.
+  negative_signals:
+    - "Mon."
+    - "Tues."
+    - "Wed."
+    - "Thur."
+    - "Fri."
+    - "Sat."
+    - "Alliance Contribution"
+    - "Strength"
+    - "STRENGTH"
   pre_ocr_hint:
     x_hint: 0.65
     y_hint: 0.15
