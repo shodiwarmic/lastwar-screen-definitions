@@ -21,7 +21,12 @@
       "properties": {
         "page_signals": { "type": "array", "items": {"type": "string"}, "minItems": 1 },
         "negative_signals": { "type": "array", "items": {"type": "string"} },
-        "pre_ocr_hint": { "$ref": "#/$defs/pre_ocr_hint" }
+        "pre_ocr_hint": {
+          "oneOf": [
+            { "$ref": "#/$defs/pre_ocr_hint" },
+            { "type": "null" }
+          ]
+        }
       }
     },
     "boundaries": {
@@ -89,17 +94,8 @@
       "required": ["signals"],
       "additionalProperties": false,
       "properties": {
-        "signals": { "type": "array", "items": {"type": "string"}, "minItems": 1 },
-        "search_region": { "$ref": "#/$defs/normalized_region" },
-        "anchor_offset": {
-          "type": "object",
-          "required": ["type"],
-          "additionalProperties": false,
-          "properties": {
-            "type": { "type": "string", "enum": ["below_bottom_edge", "above_top_edge"] },
-            "offset_fraction": {"type": "number", "default": 0.0}
-          }
-        }
+        "signals": { "type": "array", "items": {"type": "string"} },
+        "search_region": { "$ref": "#/$defs/normalized_region" }
       }
     },
     "tab_active_indicator": {
@@ -114,6 +110,15 @@
         "bbox_padding_fraction": {"type": "number", "default": 0.007}
       }
     },
+    "tab_group_config": {
+      "type": "object",
+      "required": ["strategy"],
+      "additionalProperties": false,
+      "properties": {
+        "strategy": { "type": "string", "enum": ["brightest", "color_fraction"] },
+        "min_fraction": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.10}
+      }
+    },
     "tab_item": {
       "type": "object",
       "required": ["id", "category", "signals"],
@@ -122,7 +127,8 @@
         "id": {"type": "string"},
         "category": {"type": "string"},
         "signals": { "type": "array", "items": {"type": "string"}, "minItems": 1 },
-        "x_hint": {"type": "number", "minimum": 0, "maximum": 1}
+        "x_hint": {"type": "number", "minimum": 0, "maximum": 1},
+        "group": {"type": "string"}
       }
     },
     "tabs_definition": {
@@ -133,6 +139,10 @@
         "search_region": { "$ref": "#/$defs/normalized_region" },
         "y_hint": {"type": "number", "minimum": 0, "maximum": 1},
         "active_indicator": { "$ref": "#/$defs/tab_active_indicator" },
+        "groups": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/tab_group_config" }
+        },
         "items": { "type": "array", "items": { "$ref": "#/$defs/tab_item" }, "minItems": 1 }
       }
     },

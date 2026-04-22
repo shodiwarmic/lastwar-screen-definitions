@@ -119,9 +119,10 @@ Boundary anchors locate the top and bottom of the player list by searching for O
 
 | Field | Description |
 |---|---|
-| `signals` | One or more OCR text strings that mark this boundary. |
+| `signals` | OCR text strings that mark this boundary. May be an empty array (`[]`) — see "Empty signals" below. |
 | `search_region` | Fraction of the image height to scan. Narrows the search to avoid false matches. |
-| `anchor_offset` | *(Parsed but not yet implemented — reserved for future use.)* Intended to shift the boundary by a fraction of image height relative to the matched line's edge. Currently the boundary is always set to the exact bottom of the header line / top of the footer line. |
+
+**Empty signals.** When `signals: []`, the boundary has no text anchor; consumers must fall back to `chrome.bottom_fraction` (footer) or `chrome.top_fraction` (header), or — when `chrome` is also absent — to the image edge. `season_contribution.yaml` uses this for its footer because that screen has no "Your Alliance" line, only the user's pinned own-row above the nav bar.
 
 ---
 
@@ -153,7 +154,7 @@ tabs:
 | `strategy` | `color_fraction` — active tab has a solid colour (e.g. orange) covering ≥ `min_fraction` of its crop. `brightest` — active tab has a higher V-channel brightness than inactive tabs (used for day tabs which are white, not orange). |
 | `min_fraction` | (color_fraction only) Minimum fraction of pixels that must match `color` to call a tab active. |
 | `min_gap` | (brightest only) Minimum brightness difference (V channel, 0–1) between the brightest and second-brightest tab to declare a winner. |
-| `color` | *(Parsed but not yet implemented — reserved for future use.)* Intended to supply per-layout HSV thresholds for tab active-indicator detection. Currently the service uses hard-coded RGB thresholds for orange and white detection. |
+| `color` | Per-layout HSV thresholds for tab active-indicator detection. When `hsv_override` is provided, consumers MUST use it; otherwise consumers fall back to the canonical RGB constants documented in the Consumer Contract section below (orange / white). |
 | `bbox_padding_fraction` | Pixels to expand around each tab's OCR bounding box before sampling, expressed as a fraction of image width. Ensures the tab background rather than the text glyph is sampled. |
 
 **Tab items**
@@ -164,7 +165,18 @@ tabs:
 | `category` | Output key returned by the classifier and stored as the `day` value in the database (e.g. `"kills"`, `"donation_daily"`). Falls back to `id` when blank. |
 | `signals` | **Alternative** OCR text tokens for this tab — any one signal matching is sufficient. Each signal is a space-separated sequence of words that must ALL appear in the OCR line for that signal to match (e.g. `["Weekly Rank"]` requires both "Weekly" and "Rank" to be present). Different signals on the same item are OR-ed together. |
 | `x_hint` | Horizontal centre of the tab button as a fraction of image width. Used to select the correct OCR element when multiple tab labels appear on one line, and as the colour-sample centre for active-tab detection. |
-| `group` | Non-empty only on layouts with multiple independent tab rows (e.g. `alliance_contribution` has `category` and `period` groups). The service picks one winner per group and joins them with `_` (e.g. `"siege_daily"`). Omit for single-row tab layouts. |
+| `group` | Non-empty only on layouts with multiple independent tab rows (e.g. `alliance_contribution` has `category` and `period` groups). Each group's winner is detected with that group's `tabs.groups[name]` config; winners are joined with `_` in declaration order (e.g. `"siege_daily"`). Omit for single-row tab layouts. |
+
+**`groups`** *(optional, multi-row tabs only)*
+
+```yaml
+tabs:
+  groups:
+    category: {strategy: color_fraction, min_fraction: 0.10}
+    period:   {strategy: brightest,      min_fraction: 0.02}
+```
+
+Maps each `tab_item.group` name to its own active-indicator config (`strategy`, `min_fraction`). Required when any `tab_item` has a non-empty `group`. The top-level `tabs.active_indicator` is still parsed but only used for groups not listed here. Used by `season_contribution.yaml` to detect the active category (orange-filled) and period (brightest white text) tabs independently.
 
 ---
 
@@ -218,6 +230,108 @@ row_clustering:
 
 ---
 
+## Consumer Contract
+
+This section is the source of truth for any adapter that consumes these definitions (today: `lastwar-ocr-service` in Python and `lastwar-android-scanner` in Kotlin; tomorrow: anything else). When the contract here disagrees with code, the contract is right and the code is broken. Open an issue.
+
+### Pipeline stages
+
+Every consumer MUST implement these stages, in this order, for every captured frame:
+
+1. **Load definitions.** Parse `catalog.yaml` and each per-screen YAML referenced by it. Sort by `catalog.yaml:screens[].priority` ascending — lower number is checked first. Validate each parsed file against `meta-schema.json` at startup; failure aborts boot.
+2. **Pre-OCR hint** *(optional, when `identification.pre_ocr_hint` is non-null).* Sample the single pixel at `(x_hint * width, y_hint * height)` and test it against `color.hsv_override` if present (otherwise the named-colour fallback below). If **every** layout with a non-null hint fails its check, the frame is skipped — no OCR runs. Layouts with `pre_ocr_hint: null` always allow OCR to proceed.
+3. **OCR.** Run word-level text recognition. Engine choice is consumer-local (Cloud Vision, ML Kit, Tesseract, …); the contract operates on `(text, bounding_box)` pairs and is engine-agnostic.
+4. **Screen identification.** For each layout in priority order: a layout matches when **every** word of **at least one** `identification.page_signals` entry appears in the OCR text (case-insensitive, space-separated tokens; e.g. signal `"Daily Rank"` requires both `"daily"` and `"rank"` to appear). A layout is rejected if any of its `identification.negative_signals` is found by the same rule. First match wins.
+5. **Boundary detection.** Locate `boundaries.header.signals` within `boundaries.header.search_region` (top boundary = bottom edge of matched line) and `boundaries.footer.signals` within `boundaries.footer.search_region` (bottom boundary = top edge of matched line). When `signals: []` (e.g. `season_contribution.yaml`'s footer), fall back to `chrome.bottom_fraction` / `chrome.top_fraction`, then to the image edge.
+6. **Tab detection.** Within `tabs.search_region`, identify the active tab using either the top-level `tabs.active_indicator` or the per-group `tabs.groups[name]` config (when `tab_item.group` is non-empty on any item). For multi-row tabs, run detection independently per group and join winners with `_` in declaration order. The output category is the winning `tab_item.category` (falling back to `id` if `category` is empty).
+7. **Column extraction.** Map every OCR token's `x_centre / image_width` to the column whose `[x_min, x_max]` contains it. `type: ignore` tokens are dropped; `type: name` tokens become name candidates; the rightmost numeric `type: score` token in each row is the score.
+8. **Row clustering.** Per `row_clustering.strategy`. `score_anchored` (preferred): each numeric token in the score column ≥ `min_score` is an anchor; collect name tokens in `[anchor.top - up_band_fraction*H, anchor.bottom + down_band_fraction*H]`. `y_proximity`: group all tokens by vertical proximity then column-extract within each group.
+9. **Crash-token recovery.** Detect tokens matching `[a-zA-Z].*\d{1,3}(?:,\d{3})+$` (alpha + comma-grouped trailing integer); generate every valid split where the name prefix contains no comma. See the algorithm spec in *Name/score crash tokens* below.
+10. **Candidate disambiguation.** Pick one (name, score) per row using the priority order in *Name resolution* below. Emit the chosen pair (and optionally the candidates list — see *Output contract*).
+11. **Output.** Emit one `(player_name, score, category)` triple per row, plus the active screen `id` and tab `category`.
+
+### Output contract
+
+Consumers choose between two equivalent payload shapes — both are accepted by `lastwar-alliance-manager`:
+
+**Shape A — server-resolved** (used by `lastwar-ocr-service`):
+
+```json
+{
+  "category_key": [
+    {"player_name": "ShodiWarmic", "score": 161528090},
+    {
+      "player_name": "Ruthless5432",
+      "score": 1038000,
+      "candidates": [
+        {"player_name": "Ruthless5432", "score": 1038000},
+        {"player_name": "Ruthless543",  "score": 21038000},
+        {"player_name": "Ruthless54",   "score": 321038000}
+      ]
+    }
+  ]
+}
+```
+
+The consumer picks `candidates[0]` (rightmost split, smallest score) as the default and emits all valid splits for the backend to disambiguate against the full alias engine. `candidates` is omitted when the row had no crash-token ambiguity. **`category_key` is the screen `id` for single-tab screens (e.g. `"strength_ranking"`); otherwise the tab `category` (e.g. `"friday"`, `"siege_daily"`).**
+
+**Shape B — client-resolved** (used by `lastwar-android-scanner`):
+
+```json
+{
+  "name": "Ruthless5432",
+  "score": 1038000,
+  "category": "siege_daily"
+}
+```
+
+The consumer has resolved candidates locally (using the *Name resolution* algorithm below against a cached roster) and ships only the winning `(name, score)`. The backend's name resolution becomes a final safety net rather than the primary disambiguator.
+
+A consumer **must** pick a shape and stick with it for a given screen — mixing within one frame is a bug.
+
+### Name resolution
+
+The canonical algorithm both shapes implement. The backend's `resolveMemberAlias` (Go) and the scanner's `RosterAliasResolver` (Kotlin) MUST agree on this order. If they ever drift, this section is the tie-breaker.
+
+For a candidate name, try in priority order, returning on first hit:
+
+1. **Exact** — `LOWER(member.name) == LOWER(candidate)`.
+2. **Personal alias** — `member_aliases` row where `LOWER(alias) = LOWER(candidate) AND user_id = $current_user`.
+3. **Global alias** — `member_aliases` row where `LOWER(alias) = LOWER(candidate) AND user_id IS NULL AND category = 'global'`.
+4. **OCR alias** — `member_aliases` row where `LOWER(alias) = LOWER(candidate) AND user_id IS NULL AND category = 'ocr'`.
+
+When the row has multiple crash-token candidates: try each candidate through steps 1–4 in candidates-list order; the **first candidate** that resolves wins (its name AND its score travel together — the score differs per split). If none resolve, fall back to `candidates[0]`.
+
+Personal aliases are user-scoped: a consumer that doesn't have the current user's identity (e.g. an offline batch tool) MUST skip step 2 — it MUST NOT see another user's personal aliases.
+
+### Shared fallback constants
+
+When a layout omits `hsv_override`, both the active-indicator and pre-OCR-hint stages fall back to these RGB checks. Both consumers MUST use these exact values to stay in lockstep. If a UI palette change makes them wrong, fix the values *here* and update both consumers in the same PR cycle.
+
+| Colour | Test | HSV equivalent |
+|---|---|---|
+| Orange | `r > 200 AND 80 ≤ g ≤ 170 AND b < 90` | `h_min: 0.014, h_max: 0.153, s_min: 0.40, v_min: 0.55` |
+| White | `r > 215 AND g > 215 AND b > 215` | `s_max: 0.10, v_min: 0.85` |
+
+Default schema values (when a YAML omits the field) are authoritative in `meta-schema.json` — `min_score: 1000`, `word_gap_fraction: 0.015`, `min_word_gap_px: 8`, `up_band_fraction: 0.021`, `down_band_fraction: 0.002`, `tolerance_fraction: 0.02`, `min_tolerance_px: 20`, `min_fraction: 0.10`, `min_gap: 0.04`, `bbox_padding_fraction: 0.007`. Consumers should read defaults from the schema rather than hard-coding them.
+
+### Versioning workflow
+
+When changing the schema or adding a screen:
+
+1. Bump the per-screen `version` in the YAML.
+2. Bump `meta-schema.json`'s schema version comment if structurally changed.
+3. Update both consumers' submodule SHA in the same merge cycle. Recommended order: `screen-definitions` → `lastwar-alliance-manager` (if backend contract changed) → `lastwar-ocr-service` → `lastwar-android-scanner`. Each downstream PR pins to the new submodule SHA.
+4. Add a fixture screenshot to `lastwar-screenshots/` if the change affects parsing.
+
+### Screen `id` is the backend category key
+
+The `id` field in each screen YAML (e.g. `daily_ranking`, `alliance_contribution`) is the canonical category key the backend stores in `vs_points` / `power_history` / equivalent tables. Adding a new screen requires either matching an existing category or coordinating a new one with `lastwar-alliance-manager` in the same merge cycle.
+
+For multi-tab screens, the wire-format category is the tab winner's `category` (e.g. `"friday"`, `"siege_daily"`), not the screen `id`. The backend uses the tab category to look up the column to upsert.
+
+---
+
 ## Known OCR Challenges
 
 ### Name/score crash tokens
@@ -236,12 +350,11 @@ On screens where player names end in digits (e.g. `Ruthless5432`, `CheeseKillers
 | `Ruthless543` | `23,045,000` |
 | `Ruthless54` | `323,045,000` |
 
-Adapters should:
-1. Use the **rightmost split** (smallest score) as the default heuristic.
-2. Validate middle rows against adjacent scores — the leaderboard is sorted descending, so a row's score must fall between its neighbours. If the heuristic fails this bound, try alternatives in ascending score order until one fits.
-3. When ambiguity cannot be resolved from position alone (typically rank 1), expose **all valid splits** to the consumer so they can resolve using an external member roster.
-
-**Consumer contract (recommended):** Return ambiguous rows with a `candidates` array ordered by ascending score. `candidates[0]` must match the top-level heuristic name and score. Consumers should prefer an exact roster match; fall back to `candidates[0]` if none is found. Always take **both** the name and score from the winning candidate — the score is different for each split.
+Adapters MUST:
+1. Use the **rightmost split** (smallest score) as the default heuristic — this becomes `candidates[0]`.
+2. Validate against adjacent scores — the leaderboard is sorted descending, so a row's score must fall between its neighbours. If the default violates this bound, try alternatives in ascending score order until one fits.
+3. After adjacency validation, run **Name resolution** (Consumer Contract section above) on each remaining candidate; the first to resolve wins (its name AND score travel together).
+4. When ambiguity cannot be resolved (typically rank 1, where there's no upper neighbour), emit all valid splits via Output contract Shape A's `candidates` array, or pick `candidates[0]` and ship Shape B.
 
 ---
 

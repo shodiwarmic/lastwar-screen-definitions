@@ -30,11 +30,9 @@ boundaries:
   header:
     signals: ["Commander", "Points"]
     search_region: {y_min: 0.0, y_max: 0.40}
-    anchor_offset: {type: below_bottom_edge, offset_fraction: 0.0}
   footer:
     signals: ["Your Alliance"]
     search_region: {y_min: 0.60, y_max: 1.0}
-    anchor_offset: {type: above_top_edge, offset_fraction: 0.0}
 
 chrome:
   top_fraction: 0.22
