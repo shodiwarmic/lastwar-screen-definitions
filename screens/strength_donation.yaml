@@ -1,5 +1,5 @@
 id: strength_donation
-version: 1
+version: 2
 name: Strength Ranking — Donation
 description: >
   Strength Ranking screen with the Donation row-1 tab active. A second
@@ -45,20 +45,22 @@ chrome:
   bottom_fraction: 0.12
 
 tabs:
-  # Sub-tab row sits below the row-1 metric tabs. y_hint is best-effort —
-  # tune against a real Strength → Donation screenshot when one is captured.
-  search_region: {y_min: 0.00, y_max: 0.30}
-  y_hint: 0.25
+  # Sub-tab row sits just below the row-1 metric tabs. The active sub-tab is
+  # rendered as a WHITE PILL on the dark background (not orange), matching
+  # the alliance_contribution period row. Strategy must therefore be
+  # `brightest`, not `color_fraction` — see lastwar-screenshots/
+  # pixel_fold_inside_portrait/Screenshot_20260422-132251.png for the
+  # Donation+Daily reference image, and 132256.png for Donation+Weekly.
+  search_region: {y_min: 0.10, y_max: 0.20}
+  y_hint: 0.135
   active_indicator:
-    strategy: color_fraction
-    min_fraction: 0.10
-    color:
-      named: orange
-      hsv_override: {h_min: 0.014, h_max: 0.153, s_min: 0.40, v_min: 0.55}
+    strategy: brightest
+    min_fraction: 0.02
+    min_gap: 0.04
     bbox_padding_fraction: 0.007
   items:
-    - {id: donation_daily,  category: donation_daily,  signals: ["Daily"],  x_hint: 0.20}
-    - {id: donation_weekly, category: donation_weekly, signals: ["Weekly"], x_hint: 0.42}
+    - {id: donation_daily,  category: donation_daily,  signals: ["Daily"],  x_hint: 0.27}
+    - {id: donation_weekly, category: donation_weekly, signals: ["Weekly"], x_hint: 0.50}
 
 columns:
   - {id: rank,  type: ignore, x_min: 0.00, x_max: 0.15}
