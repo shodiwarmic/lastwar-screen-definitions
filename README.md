@@ -254,16 +254,42 @@ This section is the source of truth for any adapter that consumes these definiti
 Every consumer MUST implement these stages, in this order, for every captured frame:
 
 1. **Load definitions.** Parse `catalog.yaml` and each per-screen YAML referenced by it. Sort by `catalog.yaml:screens[].priority` ascending — lower number is checked first. Validate each parsed file against `meta-schema.json` at startup; failure aborts boot.
-2. **Pre-OCR hint** *(optional, when `identification.pre_ocr_hint` is non-null).* Sample the single pixel at `(x_hint * width, y_hint * height)` and test it against `color.hsv_override` if present (otherwise the named-colour fallback below). If **every** layout with a non-null hint fails its check, the frame is skipped — no OCR runs. Layouts with `pre_ocr_hint: null` always allow OCR to proceed.
-3. **OCR.** Run word-level text recognition. Engine choice is consumer-local (Cloud Vision, ML Kit, Tesseract, …); the contract operates on `(text, bounding_box)` pairs and is engine-agnostic.
-4. **Screen identification.** For each layout in priority order: a layout matches when **every** word of **at least one** `identification.page_signals` entry appears in the OCR text (case-insensitive, space-separated tokens; e.g. signal `"Daily Rank"` requires both `"daily"` and `"rank"` to appear). A layout is rejected if any of its `identification.negative_signals` is found by the same rule. First match wins.
-5. **Boundary detection.** Locate `boundaries.header.signals` within `boundaries.header.search_region` (top boundary = bottom edge of matched line) and `boundaries.footer.signals` within `boundaries.footer.search_region` (bottom boundary = top edge of matched line). When `signals: []` (e.g. `season_contribution.yaml`'s footer), fall back to `chrome.bottom_fraction` / `chrome.top_fraction`, then to the image edge.
-6. **Tab detection.** Within `tabs.search_region`, identify the active tab using either the top-level `tabs.active_indicator` or the per-group `tabs.groups[name]` config (when `tab_item.group` is non-empty on any item). For multi-row tabs, run detection independently per group and join winners with `_` in declaration order. The output category is the winning `tab_item.category` (falling back to `id` if `category` is empty).
-7. **Column extraction.** Map every OCR token's `x_centre / image_width` to the column whose `[x_min, x_max]` contains it. `type: ignore` tokens are dropped; `type: name` tokens become name candidates; the rightmost numeric `type: score` token in each row is the score.
-8. **Row clustering.** Per `row_clustering.strategy`. `score_anchored` (preferred): each numeric token in the score column ≥ `min_score` is an anchor; collect name tokens in `[anchor.top - up_band_fraction*H, anchor.bottom + down_band_fraction*H]`. `y_proximity`: group all tokens by vertical proximity then column-extract within each group.
-9. **Crash-token recovery.** Detect tokens matching `[a-zA-Z].*\d{1,3}(?:,\d{3})+$` (alpha + comma-grouped trailing integer); generate every valid split where the name prefix contains no comma. See the algorithm spec in *Name/score crash tokens* below.
-10. **Candidate disambiguation.** Pick one (name, score) per row using the priority order in *Name resolution* below. Emit the chosen pair (and optionally the candidates list — see *Output contract*).
-11. **Output.** Emit one `(player_name, score, category)` triple per row, plus the active screen `id` and tab `category`.
+2. **Detect game window.** All YAML normalised fractions (`x_hint`, `search_region`, etc.) assume the game UI fills the captured image. On devices that capture wider canvases — most importantly the Pixel Fold's inside-landscape mode, where Android renders the game in a portrait sub-window inside a landscape screenshot — the game occupies only a portion of the image with black bars or system chrome filling the rest. Detect that game-content rectangle and **crop the captured image to it** before any subsequent stage runs. See *Game-window detection* below for the algorithm. Front-screen and edge-to-edge captures pass through unchanged because no borders are detected.
+3. **Pre-OCR hint** *(optional, when `identification.pre_ocr_hint` is non-null).* Sample the single pixel at `(x_hint * width, y_hint * height)` of the **cropped** image and test it against `color.hsv_override` if present (otherwise the named-colour fallback below). If **every** layout with a non-null hint fails its check, the frame is skipped — no OCR runs. Layouts with `pre_ocr_hint: null` always allow OCR to proceed.
+4. **OCR.** Run word-level text recognition on the cropped image. Engine choice is consumer-local (Cloud Vision, ML Kit, Tesseract, …); the contract operates on `(text, bounding_box)` pairs and is engine-agnostic.
+5. **Screen identification.** For each layout in priority order: a layout matches when **every** word of **at least one** `identification.page_signals` entry appears in the OCR text (case-insensitive, space-separated tokens; e.g. signal `"Daily Rank"` requires both `"daily"` and `"rank"` to appear). A layout is rejected if any of its `identification.negative_signals` is found by the same rule. First match wins.
+6. **Boundary detection.** Locate `boundaries.header.signals` within `boundaries.header.search_region` (top boundary = bottom edge of matched line) and `boundaries.footer.signals` within `boundaries.footer.search_region` (bottom boundary = top edge of matched line). When `signals: []` (e.g. `season_contribution.yaml`'s footer), fall back to `chrome.bottom_fraction` / `chrome.top_fraction`, then to the image edge.
+7. **Tab detection.** Within `tabs.search_region`, identify the active tab using either the top-level `tabs.active_indicator` or the per-group `tabs.groups[name]` config (when `tab_item.group` is non-empty on any item). For multi-row tabs, run detection independently per group and join winners with `_` in declaration order. The output category is the winning `tab_item.category` (falling back to `id` if `category` is empty).
+8. **Column extraction.** Map every OCR token's `x_centre / image_width` to the column whose `[x_min, x_max]` contains it. `type: ignore` tokens are dropped; `type: name` tokens become name candidates; the rightmost numeric `type: score` token in each row is the score.
+9. **Row clustering.** Per `row_clustering.strategy`. `score_anchored` (preferred): each numeric token in the score column ≥ `min_score` is an anchor; collect name tokens in `[anchor.top - up_band_fraction*H, anchor.bottom + down_band_fraction*H]`. `y_proximity`: group all tokens by vertical proximity then column-extract within each group.
+10. **Crash-token recovery.** Detect tokens matching `[a-zA-Z].*\d{1,3}(?:,\d{3})+$` (alpha + comma-grouped trailing integer); generate every valid split where the name prefix contains no comma. See the algorithm spec in *Name/score crash tokens* below.
+11. **Candidate disambiguation.** Pick one (name, score) per row using the priority order in *Name resolution* below. Emit the chosen pair (and optionally the candidates list — see *Output contract*).
+12. **Output.** Emit one `(player_name, score, category)` triple per row, plus the active screen `id` and tab `category`.
+
+### Game-window detection
+
+The pipeline's stage 2 detects the rectangle inside the captured image where the game UI actually lives, and crops to it. This neutralises Pixel-Fold-style split-screen captures where the game is a portrait sub-window positioned at the left, centre, or right of a landscape canvas. Two strategies; consumers SHOULD implement both and prefer (a):
+
+**(a) Black-border scan** *(preferred, runs pre-OCR).* Scan columns from the left edge of the image inward; the first column that is **not** a "border" is the left edge of the game window. Repeat from the right, top, and bottom edges. A column counts as a border when at least 95% of `SAMPLE_COUNT` (default 64) uniformly-spaced pixels in it have every channel ≤ 30 (near-black).
+
+Reference values that work across all currently-shipped configurations:
+
+| Constant | Value | Purpose |
+|---|---|---|
+| `NEAR_BLACK_MAX_CHANNEL` | 30 | A pixel is "near black" when every channel ≤ this. Wide enough to catch the slightly-grey Android letterbox; tight enough to reject UI chrome. |
+| `BORDER_COVERAGE_THRESHOLD` | 0.95 | Fraction of sampled pixels in a column/row that must be near-black for it to count as a border. Allows a few stray noisy pixels. |
+| `MIN_WINDOW_FRACTION` | 0.20 | Reject detected windows smaller than this fraction of either dimension — usually means the borders logic was confused (e.g. a near-black loading frame). |
+| `SAMPLE_COUNT` | 64 | Pixels sampled per column/row. More = slower but more reliable. |
+
+The function returns *no detection* (i.e. don't crop) when the detected window equals the full image (no letterbox to remove) **or** when it falls below `MIN_WINDOW_FRACTION`.
+
+**(b) OCR-bbox union** *(post-OCR fallback).* When (a) returns no detection but the consumer has reason to suspect the image is still letterboxed (e.g. the system "Double-tap to move this app" panel in split-screen mode is dark grey, not black), re-run detection by taking the union of every text-block bounding box from the OCR pass and padding by `BBOX_PADDING_FRACTION` (0.03) of each dimension. Clamp to image bounds.
+
+This strategy isn't free — it requires OCR to have already run on the un-cropped image. If a consumer relies on it as a fallback, the pre-OCR hint stage cannot be assumed correct (its sampled pixel may have landed in chrome, not the game). Production consumers should treat (b) as recovery from a (a) miss, not a primary strategy.
+
+**When detection is unnecessary.** Captures where the game already fills the image — Pixel 10 Pro XL baseline, Pixel Fold front-screen, Pixel Fold inside-portrait — all return no-detection from (a) and pass through unchanged. Consumers can skip stage 2 entirely if they know their input source never letterboxes (e.g. a server-side import flow that only accepts edge-to-edge phone captures).
+
+**Reference implementation.** `lastwar-ocr-service/app/utils/window_detect.py` is the canonical Python implementation; the Android scanner currently does not implement stage 2 because its capture source (`MediaProjection`) always produces edge-to-edge frames in portrait orientation. If that changes (e.g. the scanner adds Fold landscape support), it must mirror the same constants.
 
 ### Output contract
 
