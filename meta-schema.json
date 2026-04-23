@@ -9,7 +9,7 @@
   "properties": {
     "id": {
       "type": "string",
-      "description": "Canonical identifier. Maps directly to the backend category key (e.g. 'daily_ranking', 'weekly_ranking', 'strength_ranking')."
+      "description": "Canonical identifier of this screen. Used as the catalog key and as the screen-level token in logs and traces. Wire-format categories come from the active tab's `category` field, not from `id` — see Consumer Contract → 'Screen `id` is the backend category key' for nuance."
     },
     "version": { "type": "integer", "minimum": 1 },
     "name": { "type": "string" },

@@ -28,8 +28,10 @@ identification:
     - "Fri."
     - "Sat."
   # No pre_ocr_hint — the Donation row-1 tab sits at the same x position
-  # as Power/Kills, so a single-pixel orange sample can't distinguish.
-  # Pass-1 colour classification is skipped; OCR-text classification handles it.
+  # as Power/Kills, so a single-pixel orange sample can't distinguish them.
+  # Consumers that use pre_ocr_hint as a fast-skip (e.g. the Android scanner
+  # per-frame) will simply skip this layout in that pass and fall through
+  # to OCR-text identification.
   pre_ocr_hint: null
 
 boundaries:
