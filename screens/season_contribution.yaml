@@ -40,10 +40,14 @@ tabs:
     # Category row: active button has a full orange background.
     category: {strategy: color_fraction, min_fraction: 0.10}
     # Period row: active tab text is white; inactive tab text is gray.
-    # "brightest" samples the text region for each tab and picks the most white.
-    # min_fraction is low (0.02) because period tabs have text only — not a solid
-    # colour fill — so white pixel coverage is typically only 2–8% of the bbox area.
-    period:   {strategy: brightest,      min_fraction: 0.02}
+    # "brightest" samples the text region for each tab and picks the most
+    # white. min_fraction acts as a brightness-gap floor (active V minus
+    # second-place V). Calibrated empirically across the 60 cropped Pixel
+    # Fold inside-landscape fixtures where the gap ranges from ~0.012
+    # (defeat_daily, mutual_assistance_daily) to ~0.04 (most others).
+    # 0.008 leaves some headroom while remaining well above day-to-day noise
+    # (~0.003) on adjacent inactive tabs.
+    period:   {strategy: brightest,      min_fraction: 0.005}
   active_indicator:
     strategy: color_fraction
     min_fraction: 0.10
