@@ -270,22 +270,15 @@ Every consumer MUST implement these stages, in this order, for every captured fr
 
 The pipeline's stage 2 detects the rectangle inside the captured image where the game UI actually lives, and crops to it. This neutralises Pixel-Fold-style split-screen captures where the game is a portrait sub-window positioned at the left, centre, or right of a landscape canvas. Two strategies; consumers SHOULD implement both and prefer (a):
 
-**(a) Black-border scan** *(preferred, runs pre-OCR).* Scan columns from the left edge of the image inward; the first column that is **not** a "border" is the left edge of the game window. Repeat from the right, top, and bottom edges. A column counts as a border when at least 95% of `SAMPLE_COUNT` (default 64) uniformly-spaced pixels in it have every channel ≤ 30 (near-black).
+**(a) Black-border scan** *(preferred, runs pre-OCR).* Scan columns from the left edge of the image inward; the first column that is **not** a "border" is the left edge of the game window. Repeat from the right, top, and bottom edges. A column counts as a border when at least `border_coverage_threshold` of `sample_count` uniformly-spaced pixels in it have every channel ≤ `near_black_max_channel`.
 
-Reference values that work across all currently-shipped configurations:
+The function returns *no detection* (i.e. don't crop) when the detected window equals the full image (no letterbox to remove) **or** when it falls below `min_window_fraction` of either dimension (usually a near-black loading frame).
 
-| Constant | Value | Purpose |
-|---|---|---|
-| `NEAR_BLACK_MAX_CHANNEL` | 30 | A pixel is "near black" when every channel ≤ this. Wide enough to catch the slightly-grey Android letterbox; tight enough to reject UI chrome. |
-| `BORDER_COVERAGE_THRESHOLD` | 0.95 | Fraction of sampled pixels in a column/row that must be near-black for it to count as a border. Allows a few stray noisy pixels. |
-| `MIN_WINDOW_FRACTION` | 0.20 | Reject detected windows smaller than this fraction of either dimension — usually means the borders logic was confused (e.g. a near-black loading frame). |
-| `SAMPLE_COUNT` | 64 | Pixels sampled per column/row. More = slower but more reliable. |
-
-The function returns *no detection* (i.e. don't crop) when the detected window equals the full image (no letterbox to remove) **or** when it falls below `MIN_WINDOW_FRACTION`.
-
-**(b) OCR-bbox union** *(post-OCR fallback).* When (a) returns no detection but the consumer has reason to suspect the image is still letterboxed (e.g. the system "Double-tap to move this app" panel in split-screen mode is dark grey, not black), re-run detection by taking the union of every text-block bounding box from the OCR pass and padding by `BBOX_PADDING_FRACTION` (0.03) of each dimension. Clamp to image bounds.
+**(b) OCR-bbox union** *(post-OCR fallback).* When (a) returns no detection but the consumer has reason to suspect the image is still letterboxed (e.g. the system "Double-tap to move this app" panel in split-screen mode is dark grey, not black), re-run detection by taking the union of every text-block bounding box from the OCR pass and padding by `bbox_padding_fraction` of each dimension. Clamp to image bounds.
 
 This strategy isn't free — it requires OCR to have already run on the un-cropped image. If a consumer relies on it as a fallback, the pre-OCR hint stage cannot be assumed correct (its sampled pixel may have landed in chrome, not the game). Production consumers should treat (b) as recovery from a (a) miss, not a primary strategy.
+
+All values above (`border_coverage_threshold`, `sample_count`, `near_black_max_channel`, `min_window_fraction`, `bbox_padding_fraction`) are defined in `constants.yaml` under `window_detection`. Both consumers load them at startup.
 
 **When detection is unnecessary.** Captures where the game already fills the image — Pixel 10 Pro XL baseline, Pixel Fold front-screen, Pixel Fold inside-portrait — all return no-detection from (a) and pass through unchanged. Consumers can skip stage 2 entirely if they know their input source never letterboxes (e.g. a server-side import flow that only accepts edge-to-edge phone captures).
 
@@ -347,14 +340,13 @@ Personal aliases are user-scoped: a consumer that doesn't have the current user'
 
 ### Shared fallback constants
 
-When a layout omits `hsv_override`, both the active-indicator and pre-OCR-hint stages fall back to these RGB checks. Both consumers MUST use these exact values to stay in lockstep. If a UI palette change makes them wrong, fix the values *here* and update both consumers in the same PR cycle.
+All cross-consumer fallback values live in **`constants.yaml`** at the repository root. Both consumers load it at startup. If a UI palette change makes one wrong, edit the value in `constants.yaml`, bump the submodule SHA in each consumer, and ship — no consumer code changes needed. Sections currently defined:
 
-| Colour | Test | HSV equivalent |
-|---|---|---|
-| Orange | `r > 200 AND 80 ≤ g ≤ 170 AND b < 90` | `h_min: 0.014, h_max: 0.153, s_min: 0.40, v_min: 0.55` |
-| White | `r > 215 AND g > 215 AND b > 215` | `s_max: 0.10, v_min: 0.85` |
+- **`fallback_colors`** — Orange and white RGB+HSV thresholds used when a screen YAML's `color.hsv_override` is absent.
+- **`window_detection`** — Constants for the game-window detection stage (border-coverage threshold, sample count, sanity-check minimum window size, OCR-bbox padding fraction). See *Game-window detection* above.
+- **`crash_tokens`** — Score-suffix regex for crash-token detection. See *Name/score crash tokens* below.
 
-Default schema values (when a YAML omits the field) are authoritative in `meta-schema.json` — `min_score: 1000`, `word_gap_fraction: 0.015`, `min_word_gap_px: 8`, `up_band_fraction: 0.021`, `down_band_fraction: 0.002`, `tolerance_fraction: 0.02`, `min_tolerance_px: 20`, `min_fraction: 0.10`, `min_gap: 0.04`, `bbox_padding_fraction: 0.007`. Consumers should read defaults from the schema rather than hard-coding them.
+Per-field default values (when a YAML omits a field) are authoritative in `meta-schema.json` — `min_score: 1000`, `word_gap_fraction: 0.015`, `min_word_gap_px: 8`, `up_band_fraction: 0.021`, `down_band_fraction: 0.002`, `tolerance_fraction: 0.02`, `min_tolerance_px: 20`, `min_fraction: 0.10`, `min_gap: 0.04`, `bbox_padding_fraction: 0.007`. Consumers should read defaults from the schema rather than hard-coding them.
 
 ### Versioning workflow
 

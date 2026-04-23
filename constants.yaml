@@ -1,0 +1,86 @@
+# Last War Screen Definitions — Shared Constants
+#
+# Cross-consumer values both `lastwar-ocr-service` (Python) and
+# `lastwar-android-scanner` (Kotlin) MUST agree on. Edit this file
+# instead of hardcoding values in either consumer's code.
+#
+# When to add a constant here vs. leave it in service code:
+#   - Add here if both consumers (or a third one) must use the same value
+#     (UI palette, behaviour-defining thresholds, OCR-engine-agnostic
+#     algorithms).
+#   - Leave in service code if only one consumer cares (Cloud Vision API
+#     limits, ML Kit batching parameters, image-stitcher implementation
+#     details).
+#
+# When to bump schema_version:
+#   - Adding a new top-level section.
+#   - Removing/renaming an existing key.
+#   - NOT for adjusting a numeric value within an existing key.
+#
+# Reference implementations:
+#   Python: lastwar-ocr-service/app/utils/constants.py (loader)
+#   Kotlin: lastwar-android-scanner/app/.../util/ConstantsLoader.kt (loader)
+schema_version: 1
+
+
+# ---------------------------------------------------------------------------
+# Fallback colours
+#
+# Used when a screen YAML omits an explicit `color.hsv_override`. These
+# describe the Last War game UI's active-tab palette as of game version
+# 4.x. If a future game update changes the palette, edit values here and
+# both consumers pick them up after a submodule bump — no consumer code
+# changes needed.
+# ---------------------------------------------------------------------------
+fallback_colors:
+  orange:
+    rgb: {r_min: 200, g_min: 80, g_max: 170, b_max: 90}
+    hsv: {h_min: 0.014, h_max: 0.153, s_min: 0.40, v_min: 0.55}
+  white:
+    rgb: {r_min: 215, g_min: 215, b_min: 215}
+    hsv: {s_max: 0.10, v_min: 0.85}
+
+
+# ---------------------------------------------------------------------------
+# Game-window detection
+#
+# Constants for the black-border / OCR-bbox detection of the game's
+# rendering rectangle inside a captured image (e.g. when Android renders
+# the game in a portrait sub-window inside a Pixel Fold landscape canvas).
+# Both consumers' implementations must use these exact values so cropping
+# is consistent across platforms. See the Game-window detection section
+# of README.md for the algorithm.
+# ---------------------------------------------------------------------------
+window_detection:
+  # A pixel is "near black" when every channel is at or below this.
+  near_black_max_channel: 30
+  # Fraction of sampled pixels in a column/row that must be near-black for
+  # the column/row to count as part of the letterbox border.
+  border_coverage_threshold: 0.95
+  # Detected windows smaller than this fraction of either dimension are
+  # rejected as implausible (likely a near-black loading frame).
+  min_window_fraction: 0.20
+  # Pixels sampled per column/row when scanning. More = slower but more
+  # reliable on noisy captures.
+  sample_count: 64
+  # OCR-bbox fallback padding — expand the union-of-bboxes by this fraction
+  # of the original dimension to capture UI chrome that contains no text
+  # (e.g. the back-arrow button in the corner).
+  bbox_padding_fraction: 0.03
+
+
+# ---------------------------------------------------------------------------
+# Crash-token recovery
+#
+# Pattern + thresholds for detecting OCR-merged "name+score" tokens like
+# `Ruthless54323,045,000` (player name's trailing digit fused with the
+# score's leading digit). See the "Name/score crash tokens" section of
+# README.md for the full algorithm; this section just centralises the
+# numeric parameters that drive it.
+# ---------------------------------------------------------------------------
+crash_tokens:
+  # Pattern matched against a token's suffix to identify a candidate
+  # comma-grouped score. Anchored as a fullmatch on the candidate suffix
+  # by both consumers; defined here for documentation and to keep the
+  # two implementations in sync.
+  score_suffix_pattern: '\d{1,3}(?:,\d{3})+'
