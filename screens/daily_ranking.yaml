@@ -1,5 +1,5 @@
 id: daily_ranking
-version: 1
+version: 2
 name: Daily Ranking
 description: >
   Alliance VS points leaderboard for a single day. Displays columns for
@@ -43,7 +43,11 @@ tabs:
   y_hint: 0.20
   active_indicator:
     strategy: brightest
-    min_gap: 0.04
+    # Wednesday/Monday fixtures with min_gap=0.04 hit the threshold by ~0.001
+    # (best=0.737 vs second=0.698 → gap=0.039). Lowering to 0.025 catches them
+    # while staying well above day-to-day noise (~0.005 between adjacent
+    # inactive tabs in calibration runs).
+    min_gap: 0.025
     bbox_padding_fraction: 0.007
   items:
     - {id: monday,    category: monday,    signals: ["Mon", "Mon."],     x_hint: 0.10}
