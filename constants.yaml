@@ -20,7 +20,7 @@
 # Reference implementations:
 #   Python: lastwar-ocr-service/app/utils/constants.py (loader)
 #   Kotlin: lastwar-android-scanner/app/.../util/ConstantsLoader.kt (loader)
-schema_version: 1
+schema_version: 2
 
 
 # ---------------------------------------------------------------------------
@@ -84,3 +84,24 @@ crash_tokens:
   # by both consumers; defined here for documentation and to keep the
   # two implementations in sync.
   score_suffix_pattern: '\d{1,3}(?:,\d{3})+'
+
+
+# ---------------------------------------------------------------------------
+# Pre-OCR enhancement
+#
+# Per-channel contrast stretch applied to a COPY of the (cropped) image before
+# OCR — see the "Pre-OCR enhancement" section of README.md. Clips `cutoff`
+# percent of the lightest and darkest pixels of each of R/G/B independently and
+# stretches the surviving range to 0–255. Keep the original for colour sampling.
+# Do NOT grayscale: the colour (blue-channel) separation between coloured text
+# and coloured backgrounds on the top-3 / self rows is what makes the score
+# readable; grayscale erases it.
+#
+# Reference implementations:
+#   Python: PIL.ImageOps.autocontrast(img, cutoff=1)
+#   Kotlin: ScreenCaptureService.enhanceForOcr (per-channel histogram LUT)
+# ---------------------------------------------------------------------------
+ocr_preprocessing:
+  # Percent clipped from each tail of each channel's histogram (PIL autocontrast
+  # `cutoff`). 0 disables enhancement (plain OCR on the unmodified image).
+  autocontrast_cutoff: 1
