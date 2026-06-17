@@ -139,7 +139,7 @@ tabs:
   search_region: {y_min: 0.00, y_max: 0.30}  # both bounds enforced
   y_hint: 0.20
   active_indicator:
-    strategy: color_fraction   # or "brightest"
+    strategy: color_fraction   # or "brightest" / "least_saturated"
     min_fraction: 0.10
     min_gap: 0.04
     color:
@@ -155,11 +155,15 @@ tabs:
 
 | Field | Description |
 |---|---|
-| `strategy` | `color_fraction` — active tab has a solid colour (e.g. orange) covering ≥ `min_fraction` of its crop. `brightest` — active tab has a higher V-channel brightness than inactive tabs (used for day tabs which are white, not orange). |
+| `strategy` | `color_fraction` — active tab has a solid colour (e.g. orange) covering ≥ `min_fraction` of its crop. `brightest` — active tab has a higher V-channel brightness than inactive tabs. `least_saturated` — active tab is a desaturated near-white pill while inactive tabs are warm grey; pick the lowest-saturation tab (see note below). |
 | `min_fraction` | (color_fraction only) Minimum fraction of pixels that must match `color` to call a tab active. |
 | `min_gap` | (brightest only) Minimum brightness difference (V channel, 0–1) between the brightest and second-brightest tab to declare a winner. |
+| `max_saturation` | (least_saturated only) The winning tab's mean saturation must be ≤ this for it to qualify as a desaturated white pill — guards against picking a "least saturated" tab when none is actually active. Default `0.06`. |
+| `min_saturation_gap` | (least_saturated only) Minimum saturation difference (S channel, 0–1) between the lowest-saturation (active) tab and the next-lowest to declare a winner. Default `0.03`. |
 | `color` | Per-layout HSV thresholds for tab active-indicator detection. When `hsv_override` is provided, consumers MUST use it; otherwise consumers fall back to the canonical RGB constants documented in the Consumer Contract section below (orange / white). |
 | `bbox_padding_fraction` | Pixels to expand around each tab's OCR bounding box before sampling, expressed as a fraction of image width. Ensures the tab background rather than the text glyph is sampled. |
+
+> **`brightest` vs `least_saturated` for white-pill tab bars.** Both target a white active pill, but prefer `least_saturated`. The active pill carries bold *dark* glyphs, so colour-sampling its text bbox drags the mean V down to within ~0.02 of an inactive tab — a margin smaller than per-frame OCR-bbox jitter, so it can invert between two captures of the same screen (a Monday day-tab measured a 0.032 brightness gap standalone but only 0.0235 once stitched, falling under `min_gap` and misclassifying). Saturation separates the desaturated pill (S ≈ 0.02) from warm-grey inactive tabs (S ≈ 0.09) by ~0.07 in every context and does not invert. The Daily Ranking day tabs use `least_saturated` for this reason.
 
 **Tab items**
 
@@ -358,7 +362,7 @@ All cross-consumer fallback values live in **`constants.yaml`** at the repositor
 - **`window_detection`** — Constants for the game-window detection stage (border-coverage threshold, sample count, sanity-check minimum window size, OCR-bbox padding fraction). See *Game-window detection* above.
 - **`crash_tokens`** — Score-suffix regex for crash-token detection. See *Name/score crash tokens* below.
 
-Per-field default values (when a YAML omits a field) are authoritative in `meta-schema.json` — `min_score: 1000`, `word_gap_fraction: 0.015`, `min_word_gap_px: 8`, `up_band_fraction: 0.021`, `down_band_fraction: 0.002`, `tolerance_fraction: 0.02`, `min_tolerance_px: 20`, `min_fraction: 0.10`, `min_gap: 0.04`, `bbox_padding_fraction: 0.007`. Consumers should read defaults from the schema rather than hard-coding them.
+Per-field default values (when a YAML omits a field) are authoritative in `meta-schema.json` — `min_score: 1000`, `word_gap_fraction: 0.015`, `min_word_gap_px: 8`, `up_band_fraction: 0.021`, `down_band_fraction: 0.002`, `tolerance_fraction: 0.02`, `min_tolerance_px: 20`, `min_fraction: 0.10`, `min_gap: 0.04`, `max_saturation: 0.06`, `min_saturation_gap: 0.03`, `bbox_padding_fraction: 0.007`. Consumers should read defaults from the schema rather than hard-coding them.
 
 ### Versioning workflow
 

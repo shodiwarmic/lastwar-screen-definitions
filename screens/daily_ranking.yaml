@@ -42,12 +42,21 @@ tabs:
   search_region: {y_min: 0.00, y_max: 0.25}
   y_hint: 0.20
   active_indicator:
-    strategy: brightest
-    # Wednesday/Monday fixtures with min_gap=0.04 hit the threshold by ~0.001
-    # (best=0.737 vs second=0.698 → gap=0.039). Lowering to 0.025 catches them
-    # while staying well above day-to-day noise (~0.005 between adjacent
-    # inactive tabs in calibration runs).
-    min_gap: 0.025
+    # The active day tab is a desaturated near-white pill (S ≈ 0.02) while
+    # inactive tabs are warm grey (S ≈ 0.09). Saturation separates them ~4×
+    # more cleanly than brightness, so we pick the lowest-saturation tab.
+    #
+    # Why not `brightest`: the active pill carries bold *dark* text, so when its
+    # text bbox is colour-sampled the glyphs drag the mean V down to within
+    # ~0.02 of an inactive tab. That margin sits right on top of the per-frame
+    # OCR-bbox jitter, so the same Monday screenshot measured a 0.032 brightness
+    # gap standalone but only 0.0235 once stitched — under min_gap, which sent
+    # it to the text fallback and out as Thursday (batch 7038e97, 2026-06-16).
+    # Saturation gives a ~0.07 gap in both contexts and does not invert.
+    strategy: least_saturated
+    max_saturation: 0.06       # active pill mean S must be ≤ this to qualify
+    min_saturation_gap: 0.03   # active vs next-lowest S must differ by ≥ this
+    min_gap: 0.025             # brightness gap — retained for sub-tab rows
     bbox_padding_fraction: 0.007
   items:
     - {id: monday,    category: monday,    signals: ["Mon", "Mon."],     x_hint: 0.10}
