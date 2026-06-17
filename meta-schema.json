@@ -103,8 +103,14 @@
       "required": ["strategy"],
       "additionalProperties": false,
       "properties": {
-        "strategy": { "type": "string", "enum": ["brightest", "color_fraction"] },
-        "min_gap": {"type": "number", "default": 0.04},
+        "strategy": {
+          "type": "string",
+          "enum": ["brightest", "color_fraction", "least_saturated"],
+          "description": "How the active tab is told apart from inactive ones. `color_fraction` — active tab is a solid orange fill. `brightest` — active tab has the highest background V (used for sub-tab rows). `least_saturated` — active tab is a desaturated near-white pill while inactive tabs are warm grey; pick the lowest-saturation tab. Prefer `least_saturated` over `brightest` for white-pill tab bars: saturation separates active from inactive several times more cleanly than brightness, which can fall below `min_gap` on low-contrast captures."
+        },
+        "min_gap": {"type": "number", "default": 0.04, "description": "Minimum V-channel (brightness) gap between the winning tab and the runner-up for a `brightest` decision to count; below this the result is treated as inconclusive."},
+        "max_saturation": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.06, "description": "`least_saturated` only — the winning (active) tab's mean saturation must be at or below this for it to qualify as a desaturated white pill. Guards against picking a 'least saturated' tab on a screen where no tab is actually active."},
+        "min_saturation_gap": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.03, "description": "`least_saturated` only — minimum saturation gap between the lowest-saturation (active) tab and the next-lowest; below this the result is treated as inconclusive."},
         "min_fraction": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.10},
         "color": { "$ref": "#/$defs/color_definition" },
         "bbox_padding_fraction": {"type": "number", "default": 0.007}
