@@ -1,0 +1,57 @@
+id: mail_desert_storm
+version: 1
+name: "[Desert Storm] Battle Results! mail"
+category: desert_storm
+description: >
+  The post-event mail for Desert Storm, one per task force. The battle
+  summary and four MVP categories, then "Individual Points" and the list:
+  each row is a rank, the tagged name, and the points as a bare integer
+  ~0.020 H below the name. Nothing is pinned, so the header scrolls away
+  after the first frame; a chevron beside it collapses the list. Drawn from
+  1080x2404 and 1320x2868 captures (2026-09-27).
+
+identification:
+  page_signals:
+    - "Battle Results"
+    - "Individual Points"
+  negative_signals:
+    - "Strength Ranking"
+    - "Daily Rank"
+    - "Weekly Rank"
+    - "Alliance Contribution"
+  pre_ocr_hint: null
+
+boundaries:
+  header:
+    # y ~0.81 on the first frame, ~0.26 on the second device's second.
+    signals: ["Individual Points"]
+    search_region: {y_min: 0.15, y_max: 0.95}
+  footer:
+    signals: []
+
+chrome:
+  # Used once the header has scrolled away: the mail title (y ~0.12) and
+  # the "STOP" artwork (y ~0.19) sit above the first row (y ~0.29).
+  top_fraction: 0.21
+  bottom_fraction: 0.0
+
+columns:
+  - {id: rank,  type: rank,  x_min: 0.05, x_max: 0.25}
+  - {id: name,  type: name,  x_min: 0.33, x_max: 1.00}
+  - {id: score, type: score, x_min: 0.33, x_max: 1.00}
+
+row_clustering:
+  strategy: column_scoped
+  # The points centre ~0.016 H below the name, the rank ~0.015 H.
+  column_scoped: {up_band_fraction: 0.030, down_band_fraction: 0.004}
+  y_proximity: {tolerance_fraction: 0.008, min_tolerance_px: 8}
+  min_score: 0
+  score_format: plain
+  # Words in a mail name sit ~10 px apart, while Cloud Vision splits a tag
+  # from its name ("[", "PoWr", "]", "Boom") with gaps of 0-2 px.
+  word_gap_fraction: 0.005
+  min_word_gap_px: 4
+
+elements:
+  timestamp:
+    search_region: {y_min: 0.80, y_max: 1.0}

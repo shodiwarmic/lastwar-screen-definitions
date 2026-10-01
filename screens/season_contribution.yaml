@@ -1,5 +1,5 @@
 id: alliance_contribution
-version: 2
+version: 3
 name: Alliance Contribution Ranking
 description: >
   Alliance member leaderboard for four war-event categories:
@@ -77,7 +77,11 @@ tabs:
        signals: ["Season Total Ranking", "Season Total"],  x_hint: 0.64}
 
 columns:
-  - {id: rank,  type: ignore, x_min: 0.00, x_max: 0.15}
+  # Rank gutter measured from the 169 OCR recordings (2026-09-30), on each
+  # recording's game window: rank digits span x 0.083–0.273 across the five
+  # screens (a token belongs to the column its x-centre falls in). The old
+  # 0.00–0.15 was never measured, and nothing read it.
+  - {id: rank,  type: rank,   x_min: 0.05, x_max: 0.26}
   - {id: name,  type: name,   x_min: 0.15, x_max: 0.60}
   - {id: score, type: score,  x_min: 0.60, x_max: 1.00}
 

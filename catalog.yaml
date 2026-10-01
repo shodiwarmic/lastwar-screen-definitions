@@ -47,3 +47,19 @@ screens:
     # this screen. The other screens carry "Alliance Contribution" as a
     # negative_signal so they never fire on this screen. Checked last
     # since it is the most niche ranking type.
+
+  # ── Post-event mails ───────────────────────────────────────────────────
+  # Override-only in the OCR service: the caller always sends the category.
+  # Each carries the four ranking page signals as negative_signals, and
+  # none of their page signals appears on a ranking screen.
+  - id: mail_alliance_exercise
+    file: screens/mail_alliance_exercise.yaml
+    priority: 6
+
+  - id: mail_zombie_siege
+    file: screens/mail_zombie_siege.yaml
+    priority: 7
+
+  - id: mail_desert_storm
+    file: screens/mail_desert_storm.yaml
+    priority: 8

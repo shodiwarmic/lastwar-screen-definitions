@@ -15,7 +15,14 @@ screens/
   strength_metrics.yaml       Strength Ranking — Power / Kills row-1 tabs
   strength_donation.yaml      Strength Ranking — Donation row-1 tab + Daily/Weekly sub-tabs
   season_contribution.yaml    Season Contribution Ranking (Mutual Assistance / Siege / Rare Soil War / Defeat)
+  mail_alliance_exercise.yaml "[Alliance Exercise] Alliance Reward" post-event mail
+  mail_zombie_siege.yaml      "Zombie Siege Report (Alliance)" post-event mail
+  mail_desert_storm.yaml      "[Desert Storm] Battle Results!" post-event mail
 ```
+
+The three mails were drawn from 1080x2404 and 1320x2868 captures (2026-09-27). They use the
+`column_scoped` strategy, and the OCR service reads them only when the caller names the
+category: its classifier never auto-detects a mail.
 
 ---
 
@@ -41,6 +48,15 @@ screens:
   - id: alliance_contribution
     file: screens/season_contribution.yaml
     priority: 5
+  - id: mail_alliance_exercise
+    file: screens/mail_alliance_exercise.yaml
+    priority: 6
+  - id: mail_zombie_siege
+    file: screens/mail_zombie_siege.yaml
+    priority: 7
+  - id: mail_desert_storm
+    file: screens/mail_desert_storm.yaml
+    priority: 8
 ```
 
 | Field | Description |
@@ -63,12 +79,14 @@ All fractions are normalised to `[0.0, 1.0]` of the image dimension unless other
 | `version` | ✓ | Integer. Increment when making breaking changes. |
 | `name` | ✓ | Human-readable display name. |
 | `description` | | Free-text description of the screen. |
+| `category` | | The wire category of a screen with **no** tab bar. Screens with `tabs` take their categories from the tab items. |
 | `identification` | ✓ | Signals used to recognise this screen (see below). |
 | `boundaries` | ✓ | Header and footer anchors used to crop the player list. |
 | `chrome` | | UI chrome fractions to remove before stitching (deprecated in stitch-first pipeline). |
 | `tabs` | | Tab bar configuration for screens with multiple data views. |
 | `columns` | ✓ | Column layout — where rank, name, and score live. |
 | `row_clustering` | ✓ | How OCR word blocks are grouped into player rows. |
+| `elements` | | Parts of the screen outside the ranked list: rows shown elsewhere with a known rank, and a timestamp line. |
 
 ---
 
@@ -214,7 +232,10 @@ Divides the horizontal space into named regions. The extractor uses `type: name`
 |---|---|
 | `name` | Tokens in this x-range are candidate player name parts. |
 | `score` | The rightmost numeric token in this x-range is the score. |
-| `ignore` | Tokens in this x-range are discarded (rank numbers, badges). |
+| `rank` | The rank gutter. The 1–999 integer in this x-range beside a row is that row's rank — a row-completeness checksum, since ranks run without gaps. When none stands alone, the leading digits OCR merged into the name token (`48ShodiWarmic`) are used instead. |
+| `ignore` | Tokens in this x-range are discarded (badges). |
+
+A token belongs to the column its **x-centre** falls in. Columns may overlap where the screen stacks values under the name (the mails); `column_scoped` then tells them apart by line and by format, not by position.
 
 ---
 
@@ -238,13 +259,16 @@ row_clustering:
 
 | Field | Description |
 |---|---|
-| `strategy` | `score_anchored` — for each score token found in the score column, collect name tokens within a vertical band above it. Prevents footer rows (e.g. "Your Alliance / [Tag] AllianceName") from being captured because they have no associated score token. Name lines with no score anchor undergo crash-token recovery. `y_proximity` (or any other value) — fallback: group all OCR lines by vertical proximity then extract columns from each group. |
+| `strategy` | `score_anchored` — for each score token found in the score column, collect name tokens within a vertical band above it. Prevents footer rows (e.g. "Your Alliance / [Tag] AllianceName") from being captured because they have no associated score token. Name lines with no score anchor undergo crash-token recovery. `y_proximity` (or any other value) — fallback: group all OCR lines by vertical proximity then extract columns from each group. `column_scoped` — for screens that stack the score under the name in the same columns (the post-event mails); see *Pipeline stages* → `column_scoped`. |
 | `score_anchored.up_band_fraction` | Fraction of **image height** to search upward from the score token's top edge for associated name tokens. |
 | `score_anchored.down_band_fraction` | Fraction of image height to search downward from the score token's bottom edge (small — handles slight vertical misalignment between name and score OCR boxes). |
 | `y_proximity.tolerance_fraction` | Fraction of image height used as the vertical tolerance when grouping OCR lines into the same player row. |
 | `y_proximity.min_tolerance_px` | Minimum tolerance in pixels (prevents the tolerance from being too tight on small screens). |
-| `min_score` | Minimum integer value for a token to be treated as a score. Filters out rank numbers (1–100) and OCR noise. |
+| `min_score` | Minimum integer value for a token to be treated as a score. Filters out rank numbers (1–100) and OCR noise. `0` is allowed: a Zombie Siege row can score zero waves. |
 | `word_gap_fraction` | Horizontal gap between adjacent OCR bounding boxes, relative to image width, **above which** a space is inserted between name tokens. Gaps at or below this threshold result in direct concatenation (handles OCR splitting a single word across two boxes). |
+| `score_format` | `plain` (default) — a bare or comma-grouped integer. `suffixed` — a decimal with an optional `K`/`M`/`G`/`B` magnitude suffix (`23.36G`). |
+| `label_tokens` | Label text printed before each row's value (`Total Damage:`). Stripped before clustering, including from the front of a token. |
+| `column_scoped.up_band_fraction` / `.down_band_fraction` | `column_scoped` only: the row's score and rank are looked for from `down_band_fraction × H` above its name line to `up_band_fraction × H` below it. |
 | `min_word_gap_px` | Absolute minimum threshold in pixels, used when `word_gap_fraction * image_width` would be smaller (narrow screens). The effective threshold is `max(word_gap_fraction * width, min_word_gap_px)`. |
 
 ---
@@ -269,6 +293,20 @@ Every consumer MUST implement these stages, in this order, for every captured fr
 10. **Crash-token recovery.** Detect tokens matching `[a-zA-Z].*\d{1,3}(?:,\d{3})+$` (alpha + comma-grouped trailing integer); generate every valid split where the name prefix contains no comma. See the algorithm spec in *Name/score crash tokens* below.
 11. **Candidate disambiguation.** Pick one (name, score) per row using the priority order in *Name resolution* below. Emit the chosen pair (and optionally the candidates list — see *Output contract*).
 12. **Output.** Emit one `(player_name, score, category)` triple per row, plus the active screen `id` and tab `category`.
+
+**Rank (`type: rank` columns).** For `score_anchored`, a row's rank is the 1–999 integer token in the rank column whose centre lies within 0.012 × H of the score anchor's centre — on Strength and Alliance Contribution the rank digits sit up to 0.010 × H *below* the score, outside the name band. When no such token exists, the leading digits of the row's first name token (`48ShodiWarmic` → 48) are the rank. A rank that is neither read nor inferable from its neighbours is omitted, never guessed.
+
+#### `column_scoped`
+
+The post-event mails stack a row's values under its name, in the same x-range — Alliance Exercise prints `Total Damage: 23.36G` about 0.025 × H below the name, Desert Storm a bare integer about 0.020 × H below — so position alone cannot tell a name from a score. Stages 6, 8 and 9 run as follows instead, and none of the `score_anchored` name cleaning (leftward filter, crash tokens, tag and rank stripping) applies: names are returned as read, whitespace-collapsed, with only a leading `[TAG]` removed.
+
+1. **Boundaries.** The top is the bottom edge of the `boundaries.header` line, else `chrome.top_fraction`, else the image top. The bottom is the top edge of the `elements.timestamp` line, else `chrome.bottom_fraction`, else the image bottom. Tokens outside are dropped.
+2. **Labels.** A token equal to a `label_tokens` entry is dropped; a label ending in `:` is also stripped from the front of a token (`Total Damage: 23.36G` → `23.36G`, for engines that return a whole line as one word). Labels are matched case-insensitively, longest first.
+3. **Lines.** Tokens whose centre is in a name or score column are grouped into lines by vertical proximity (`y_proximity.tolerance_fraction`). A line made only of tokens in `score_format` is a **value line**; any other line in the name column is a **name line**.
+4. **Rows.** Each name line is a row. Its score is the value-line token in the score column whose centre is between `column_scoped.down_band_fraction × H` above the name line and `column_scoped.up_band_fraction × H` below it — the lowest such token when there is more than one. Its rank is the 1–999 integer in the rank column within the same band, else the name's leading digits.
+5. **Kept rows.** A row with a score is kept. A row with a rank but no score is kept with `score: 0` and `score_unread: true`, because the row exists and the caller must see it. A name line with neither is not a row (artwork text, a badge).
+6. **Fixed rows.** Each `elements.fixed_rows` entry is read from above the header: the last line carrying `value_label` gives the score (the score-format token after the label); the name is the nearest line above it that is neither a `skip_labels` line nor a bare number.
+7. **Timestamp.** The `elements.timestamp` line (`YYYY-M-D H:MM:SS`) is reported, normalised to `YYYY-MM-DD HH:MM:SS`.
 
 ### Pre-OCR enhancement
 
@@ -300,11 +338,69 @@ All values above (`border_coverage_threshold`, `sample_count`, `near_black_max_c
 
 **Reference implementation.** `lastwar-ocr-service/app/utils/window_detect.py` is the canonical Python implementation; the Android scanner currently does not implement stage 2 because its capture source (`MediaProjection`) always produces edge-to-edge frames in portrait orientation. If that changes (e.g. the scanner adds Fold landscape support), it must mirror the same constants.
 
+### Wire contract v1
+
+The HTTP contract between an OCR service (`lastwar-ocr-service`) and its caller (`lastwar-alliance-manager`). This section is its canonical text; each party keeps its own constant for the versions it speaks (`SCHEMA_VERSIONS` in the service, `ocrContractVersion` in the app). The definitions repository holds no constant, because the app does not vendor it.
+
+**Request — `POST /process-batch`**, `multipart/form-data`:
+
+| Field | Required | Meaning |
+|---|---|---|
+| `images` | yes, 1–100 | The frames, any format Pillow opens. |
+| `category` | no | A category from the service's catalog (see `/health`). When present, classification is skipped and every frame is read as this category. Required for the post-event mails, which the classifier never auto-detects. |
+| `schema_version` | no | One integer: the contract version the caller will parse. Absent means `1`. |
+
+**Response 200:**
+
+```json
+{
+  "schema_version": 1,
+  "results": {
+    "<category>": [
+      {"player_name": "ShodiWarmic", "score": 161528090, "rank": 48},
+      {"player_name": "Ruthless5432", "score": 1038000, "candidates": [ ... ]}
+    ]
+  },
+  "diagnostics": { ... },
+  "warning": "No player data could be extracted from the provided images."
+}
+```
+
+`results` maps each category read to its rows; a category with no rows is omitted. `warning` is present only when `results` is empty. A response with no `schema_version` is v1 by rule — every service released before the field existed spoke v1.
+
+**Response 4xx:** `{"error": "<human-readable message>"}`, plus a machine-readable `code` where one is defined below.
+
+**`GET /health`:** `200 {"status": "ok"}`, plus the fields below.
+
+#### Additions within v1
+
+Each of these is optional: a v1 caller must accept a response without it, and must ignore any field it does not know. None changes the meaning of an existing field, so none needs a version bump.
+
+| Where | Field | Meaning |
+|---|---|---|
+| response | `schema_version` | The version this response is written in. |
+| row | `rank` | The row's rank, read from the rank column, or from leading digits OCR merged into the name. Absent when neither was readable and it could not be inferred. |
+| row | `rank_inferred` | `true` when `rank` was not read but inferred from its read neighbours in the same section (the row sits in an unbroken run between them). Values are never repaired: a misread rank is reported as read. |
+| row | `score_unread` | `true` when the row's name and rank were read but its score cell was not (seen on Zombie Siege, where Cloud Vision drops a lone `0` wave count). `score` is then `0` and means "unknown", not zero. Only `column_scoped` screens emit it. |
+| diagnostics | `service_version`, `service_commit` | The release and commit of the service that answered. |
+| diagnostics section | `ranks` | `{read, from_name, inferred, expected_start, gaps, duplicates, out_of_order}` — the rank checksum for that frame (see `rank` columns). |
+| diagnostics section | `order_violations` | Rows whose score exceeds the row above (ties allowed). |
+| diagnostics section | `mail_timestamp` | The post-event mail's timestamp line, normalised to `YYYY-MM-DD HH:MM:SS`, in the capturing phone's local time. |
+| diagnostics section | `note` | New values: `no_rows_below_header` (the header was found but nothing below it, e.g. a collapsed list). |
+| 4xx | `code` | `schema_not_supported` (with `supported_versions`), `category_not_supported` (with `category`, `supported_categories`). |
+| `/health` | `version`, `commit`, `schema_versions`, `categories` | The release, its commit, the contract versions it speaks, and every category it reads. A service without `schema_versions` speaks `[1]` and reads the 23 ranking categories. |
+
+**Negotiation.** The caller reads `/health` first when it needs a capability (a category, a version), sends `schema_version` with the request, and parses only the version it asked for. A service that cannot answer in that version refuses with `400 {code: "schema_not_supported", supported_versions: [...]}` rather than answering in another one. The service never guesses.
+
+**Changing the contract.** An additive optional field is a minor service release and stays v1. Removing or changing the meaning of a field is v2: the service lists both versions in `schema_versions` for at least one release, and answers each caller in the version it asked for.
+
 ### Output contract
 
 Consumers choose between two equivalent payload shapes — both are accepted by `lastwar-alliance-manager`:
 
-**Shape A — server-resolved** (used by `lastwar-ocr-service`):
+#### Shape A — server-resolved
+
+Used by `lastwar-ocr-service`; this is the `results` object of the wire contract above.
 
 ```json
 {
@@ -323,9 +419,11 @@ Consumers choose between two equivalent payload shapes — both are accepted by 
 }
 ```
 
-The consumer picks `candidates[0]` (rightmost split, smallest score) as the default and emits all valid splits for the backend to disambiguate against the full alias engine. `candidates` is omitted when the row had no crash-token ambiguity. **`category_key` is always the active tab's `category` field** (e.g. `"friday"`, `"weekly"`, `"power"`, `"donation_daily"`, `"siege_daily"`) — never the screen `id` itself, since every shipped screen has at least one tab.
+The consumer picks `candidates[0]` (rightmost split, smallest score) as the default and emits all valid splits for the backend to disambiguate against the full alias engine. `candidates` is omitted when the row had no crash-token ambiguity. **`category_key` is the screen's wire category** — for a screen with a tab bar, the active tab's `category` field (e.g. `"friday"`, `"weekly"`, `"power"`, `"donation_daily"`, `"siege_daily"`); for a screen without one, its top-level `category` (the three post-event mails). Never the screen `id` itself.
 
-**Shape B — client-resolved** (used by `lastwar-android-scanner`):
+#### Shape B — client-resolved
+
+Used by `lastwar-android-scanner`, which uploads to the app directly rather than through the OCR service:
 
 ```json
 {
@@ -373,11 +471,15 @@ When changing the schema or adding a screen:
 3. Update both consumers' submodule SHA in the same merge cycle. Recommended order: `screen-definitions` → `lastwar-alliance-manager` (if backend contract changed) → `lastwar-ocr-service` → `lastwar-android-scanner`. Each downstream PR pins to the new submodule SHA.
 4. Add a fixture screenshot to `lastwar-screenshots/` if the change affects parsing.
 
-### Screen `id` is the backend category key
+### Wire categories
 
-The `id` field in each screen YAML (e.g. `daily_ranking`, `alliance_contribution`) is the canonical category key the backend stores in `vs_points` / `power_history` / equivalent tables. Adding a new screen requires either matching an existing category or coordinating a new one with `lastwar-alliance-manager` in the same merge cycle.
+The screen `id` is a catalog key, not a category. The category a consumer emits — and the backend stores against — is derived from the definition:
 
-For multi-tab screens, the wire-format category is the tab winner's `category` (e.g. `"friday"`, `"siege_daily"`), not the screen `id`. The backend uses the tab category to look up the column to upsert.
+- **A screen with `tabs.groups`** (`alliance_contribution`): one category per combination of one item from each group, joined with `_` in group declaration order — `mutual_assistance_daily` … `defeat_season`, twelve in all.
+- **Any other screen with `tabs`**: each item's `category`, falling back to its `id`.
+- **A screen with no tab bar** (the post-event mails): its top-level `category`.
+
+That derivation gives today's 26: the six days, `weekly`, `power`, `kills`, `donation_daily`, `donation_weekly`, the twelve Alliance Contribution keys, and `alliance_exercise`, `zombie_siege`, `desert_storm`. Adding a screen adds its categories to every consumer that derives the set — the OCR service does — but the backend still has to know what to do with a new category, so a new one is coordinated with `lastwar-alliance-manager` in the same merge cycle.
 
 ### Cross-pair classification audit
 
@@ -385,13 +487,18 @@ When adding a new screen, walk every existing screen and ask: *if the new screen
 
 The current state, with vulnerable cells marked **❌** (only the explicit `negative_signals` listed under the screen are considered — catalog priority alone is fragile because OCR noise can break the priority assumption):
 
-| Checked ↓  /  Real screen → | Strength Power/Kills | Strength Donation | Daily VS | Weekly VS | Alliance Contribution |
-|---|---|---|---|---|---|
-| **strength_donation** (P1) | ✅ "Daily Weekly" combo not present | ✅ matches | ✅ day-name negs reject | ✅ "Weekly Rank" neg rejects | ✅ "Alliance Contribution" neg rejects |
-| **strength_metrics** (P2) | ✅ matches | ✅ "Daily Weekly" combo neg rejects | ✅ day-name negs reject | ✅ "Weekly Rank" neg rejects | ✅ "Alliance Contribution" neg rejects |
-| **weekly_ranking** (P3) | ✅ "Strength" neg rejects | ✅ "Strength" neg rejects (and "Weekly Rank" page_signal not present anyway) | ✅ day-name negs reject | ✅ matches | ✅ "Alliance Contribution" neg rejects |
-| **daily_ranking** (P4) | ✅ "Daily Rank" not present (only "Daily" sub-tab) | ✅ "Daily Rank" not present | ✅ matches | ⚠ no `negative_signal` rejects, but `weekly_ranking` (P3) wins by priority | ✅ "Alliance Contribution" neg rejects |
-| **alliance_contribution** (P5) | ✅ "Alliance Contribution" text not present | ✅ same | ✅ same | ✅ same | ✅ matches |
+| Checked ↓  /  Real screen → | Strength Power/Kills | Strength Donation | Daily VS | Weekly VS | Alliance Contribution | AE mail | ZS mail | DS mail |
+|---|---|---|---|---|---|---|---|---|
+| **strength_donation** (P1) | ✅ "Daily Weekly" combo not present | ✅ matches | ✅ day-name negs reject | ✅ "Weekly Rank" neg rejects | ✅ "Alliance Contribution" neg rejects | ✅ "Strength Daily Weekly" not present | ✅ same | ✅ same |
+| **strength_metrics** (P2) | ✅ matches | ✅ "Daily Weekly" combo neg rejects | ✅ day-name negs reject | ✅ "Weekly Rank" neg rejects | ✅ "Alliance Contribution" neg rejects | ✅ "Strength Ranking" not present | ✅ same | ✅ same |
+| **weekly_ranking** (P3) | ✅ "Strength" neg rejects | ✅ "Strength" neg rejects (and "Weekly Rank" page_signal not present anyway) | ✅ day-name negs reject | ✅ matches | ✅ "Alliance Contribution" neg rejects | ✅ "Weekly Rank" not present | ✅ same | ✅ same |
+| **daily_ranking** (P4) | ✅ "Daily Rank" not present (only "Daily" sub-tab) | ✅ "Daily Rank" not present | ✅ matches | ⚠ no `negative_signal` rejects, but `weekly_ranking` (P3) wins by priority | ✅ "Alliance Contribution" neg rejects | ✅ "Daily Rank" not present | ✅ same | ✅ same |
+| **alliance_contribution** (P5) | ✅ "Alliance Contribution" text not present | ✅ same | ✅ same | ✅ same | ✅ matches | ✅ "Alliance Contribution" not present ("Alliance Exercise", "Alliance Reward" only) | ✅ not present ("Report (Alliance)" only) | ✅ not present |
+| **mail_alliance_exercise** (P6) | ✅ "Strength Ranking" neg rejects; "Alliance Reward" not present | ✅ same | ✅ "Daily Rank" neg rejects | ✅ "Weekly Rank" neg rejects | ✅ "Alliance Contribution" neg rejects | ✅ matches | ✅ "Alliance Reward" / "Damage Ranking" not present | ✅ not present |
+| **mail_zombie_siege** (P7) | ✅ "Strength Ranking" neg rejects; "Zombie Siege Report" not present | ✅ same | ✅ "Daily Rank" neg rejects | ✅ "Weekly Rank" neg rejects | ✅ "Alliance Contribution" neg rejects | ✅ "Zombie Siege Report" not present | ✅ matches | ✅ not present |
+| **mail_desert_storm** (P8) | ✅ "Strength Ranking" neg rejects; "Battle Results" not present | ✅ same | ✅ "Daily Rank" neg rejects | ✅ "Weekly Rank" neg rejects | ✅ "Alliance Contribution" neg rejects | ✅ "Battle Results" / "Individual Points" not present | ✅ not present | ✅ matches |
+
+The mails' page signals are multi-word and appear on no ranking screen, and each mail carries the four ranking page signals as `negative_signals`; a ranking screen's page signals appear on no mail. (The OCR service does not auto-detect mails at all — the caller always names the category — so these cells guard any consumer that does.)
 
 The single ⚠ cell (`daily_ranking` on a Weekly VS frame) is *covered by priority order, not by `negative_signals`*: weekly_ranking is checked first and matches cleanly on Weekly VS, so daily_ranking never gets evaluated. It would still match if weekly_ranking failed for some unrelated reason (e.g. OCR misread "Weekly Rank") — leaving the priority defence as a known soft spot worth recording rather than masking with a `negative_signal` that would also reject Daily VS (where "Weekly Rank" is also visible as the inactive period tab).
 

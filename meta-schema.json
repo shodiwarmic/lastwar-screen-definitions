@@ -14,6 +14,10 @@
     "version": { "type": "integer", "minimum": 1 },
     "name": { "type": "string" },
     "description": { "type": "string" },
+    "category": {
+      "type": "string",
+      "description": "The wire category of a screen with no tab bar (the post-event mails). A screen with `tabs` takes its categories from its tab items instead — see Consumer Contract → Wire categories."
+    },
     "identification": {
       "type": "object",
       "required": ["page_signals"],
@@ -48,7 +52,8 @@
     },
     "tabs": { "$ref": "#/$defs/tabs_definition" },
     "columns": { "type": "array", "items": { "$ref": "#/$defs/column_definition" }, "minItems": 1 },
-    "row_clustering": { "$ref": "#/$defs/row_clustering" }
+    "row_clustering": { "$ref": "#/$defs/row_clustering" },
+    "elements": { "$ref": "#/$defs/elements" }
   },
   "$defs": {
     "normalized_region": {
@@ -158,9 +163,41 @@
       "additionalProperties": false,
       "properties": {
         "id": {"type": "string"},
-        "type": { "type": "string", "enum": ["name", "score", "ignore"] },
+        "type": {
+          "type": "string",
+          "enum": ["name", "score", "rank", "ignore"],
+          "description": "`rank` — the rank gutter: the 1–999 integer in this x-range beside each row is that row's rank. A token belongs to the column its x-centre falls in."
+        },
         "x_min": {"type": "number", "minimum": 0, "maximum": 1},
         "x_max": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "elements": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Parts of a screen outside the ranked list.",
+      "properties": {
+        "fixed_rows": { "type": "array", "items": { "$ref": "#/$defs/fixed_row" } },
+        "timestamp": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The mail's date-time line (`2026-9-26 22:47:11`, phone-local time). Its top edge is the list's bottom boundary.",
+          "properties": {
+            "search_region": { "$ref": "#/$defs/normalized_region" }
+          }
+        }
+      }
+    },
+    "fixed_row": {
+      "type": "object",
+      "required": ["rank", "value_label", "region"],
+      "additionalProperties": false,
+      "description": "A row shown outside the list with a known rank — the Alliance Exercise MVP card is rank 1, which the list never shows.",
+      "properties": {
+        "rank": {"type": "integer", "minimum": 1},
+        "value_label": {"type": "string", "description": "The label before the row's score (`Total Damage:`)."},
+        "skip_labels": {"type": "array", "items": {"type": "string"}, "description": "Lines between the name and the value that are not the name (`Attacks:`, `MVP`). A line that is only a number is skipped as well."},
+        "region": {"type": "string", "enum": ["above_header"]}
       }
     },
     "row_clustering": {
@@ -168,7 +205,7 @@
       "required": ["strategy", "min_score"],
       "additionalProperties": false,
       "properties": {
-        "strategy": { "type": "string", "enum": ["score_anchored", "y_proximity"] },
+        "strategy": { "type": "string", "enum": ["score_anchored", "y_proximity", "column_scoped"] },
         "score_anchored": {
           "type": "object",
           "additionalProperties": false,
@@ -185,7 +222,27 @@
             "min_tolerance_px": {"type": "integer", "default": 20}
           }
         },
-        "min_score": {"type": "integer", "default": 1000},
+        "column_scoped": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "`column_scoped` only. Measured from each name line: the row's score and rank are looked for from `down_band_fraction` above the name line to `up_band_fraction` below it (the names of the bands follow `score_anchored`, where the name sits above the score).",
+          "properties": {
+            "up_band_fraction": {"type": "number", "minimum": 0, "default": 0.03},
+            "down_band_fraction": {"type": "number", "minimum": 0, "default": 0.004}
+          }
+        },
+        "min_score": {"type": "integer", "minimum": 0, "default": 1000},
+        "score_format": {
+          "type": "string",
+          "enum": ["plain", "suffixed"],
+          "default": "plain",
+          "description": "`plain` — a bare or comma-grouped integer. `suffixed` — a decimal with an optional K/M/G/B magnitude suffix (`23.36G`, `9.33M`), as the Alliance Exercise mail shows damage."
+        },
+        "label_tokens": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Label text printed before the value on each row (`Total Damage:`). Stripped before clustering, including from the front of a token, because some engines return a whole line as one word."
+        },
         "word_gap_fraction": {"type": "number", "default": 0.015},
         "min_word_gap_px": {"type": "integer", "default": 8}
       }

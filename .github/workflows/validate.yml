@@ -1,0 +1,67 @@
+name: Validate definitions
+
+# Every consumer validates these files against meta-schema.json at startup and
+# refuses to boot on a failure, so a bad definition merged here breaks the next
+# submodule bump in each of them. Catch it here instead.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pyyaml==6.0.2 jsonschema==4.23.0
+      - name: Schema, catalog and constants
+        shell: python
+        run: |
+          import json, sys, yaml, jsonschema
+          from pathlib import Path
+
+          schema = json.load(open("meta-schema.json"))
+          jsonschema.Draft7Validator.check_schema(schema)
+          errors = []
+
+          catalog = yaml.safe_load(open("catalog.yaml"))
+          listed = set()
+          for entry in catalog["screens"]:
+              path = Path(entry["file"])
+              listed.add(path.as_posix())
+              if not path.is_file():
+                  errors.append(f"catalog: {entry['id']} names missing file {path}")
+                  continue
+              defn = yaml.safe_load(path.read_text())
+              # The catalog id must match the file's id, not its filename
+              # (alliance_contribution lives in season_contribution.yaml).
+              if defn.get("id") != entry["id"]:
+                  errors.append(f"catalog: {path} has id {defn.get('id')!r}, catalog says {entry['id']!r}")
+              for err in jsonschema.Draft7Validator(schema).iter_errors(defn):
+                  where = "/".join(str(p) for p in err.absolute_path) or "(root)"
+                  errors.append(f"{path}: {err.message} (at {where})")
+
+          for path in sorted(Path("screens").glob("*.yaml")):
+              if path.as_posix() not in listed:
+                  errors.append(f"{path} is not listed in catalog.yaml")
+
+          ids = [e["id"] for e in catalog["screens"]]
+          if len(ids) != len(set(ids)):
+              errors.append("catalog: duplicate screen ids")
+
+          constants = yaml.safe_load(open("constants.yaml"))
+          if not isinstance(constants, dict):
+              errors.append("constants.yaml does not load as a mapping")
+
+          for e in errors:
+              print(f"::error::{e}")
+          print(f"{len(catalog['screens'])} definitions checked, {len(errors)} error(s)")
+          sys.exit(1 if errors else 0)
