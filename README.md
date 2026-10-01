@@ -63,12 +63,14 @@ All fractions are normalised to `[0.0, 1.0]` of the image dimension unless other
 | `version` | ✓ | Integer. Increment when making breaking changes. |
 | `name` | ✓ | Human-readable display name. |
 | `description` | | Free-text description of the screen. |
+| `category` | | The wire category of a screen with **no** tab bar. Screens with `tabs` take their categories from the tab items. |
 | `identification` | ✓ | Signals used to recognise this screen (see below). |
 | `boundaries` | ✓ | Header and footer anchors used to crop the player list. |
 | `chrome` | | UI chrome fractions to remove before stitching (deprecated in stitch-first pipeline). |
 | `tabs` | | Tab bar configuration for screens with multiple data views. |
 | `columns` | ✓ | Column layout — where rank, name, and score live. |
 | `row_clustering` | ✓ | How OCR word blocks are grouped into player rows. |
+| `elements` | | Parts of the screen outside the ranked list: rows shown elsewhere with a known rank, and a timestamp line. |
 
 ---
 
@@ -214,7 +216,10 @@ Divides the horizontal space into named regions. The extractor uses `type: name`
 |---|---|
 | `name` | Tokens in this x-range are candidate player name parts. |
 | `score` | The rightmost numeric token in this x-range is the score. |
-| `ignore` | Tokens in this x-range are discarded (rank numbers, badges). |
+| `rank` | The rank gutter. The 1–999 integer in this x-range beside a row is that row's rank — a row-completeness checksum, since ranks run without gaps. When none stands alone, the leading digits OCR merged into the name token (`48ShodiWarmic`) are used instead. |
+| `ignore` | Tokens in this x-range are discarded (badges). |
+
+A token belongs to the column its **x-centre** falls in. Columns may overlap where the screen stacks values under the name (the mails); `column_scoped` then tells them apart by line and by format, not by position.
 
 ---
 
@@ -238,13 +243,16 @@ row_clustering:
 
 | Field | Description |
 |---|---|
-| `strategy` | `score_anchored` — for each score token found in the score column, collect name tokens within a vertical band above it. Prevents footer rows (e.g. "Your Alliance / [Tag] AllianceName") from being captured because they have no associated score token. Name lines with no score anchor undergo crash-token recovery. `y_proximity` (or any other value) — fallback: group all OCR lines by vertical proximity then extract columns from each group. |
+| `strategy` | `score_anchored` — for each score token found in the score column, collect name tokens within a vertical band above it. Prevents footer rows (e.g. "Your Alliance / [Tag] AllianceName") from being captured because they have no associated score token. Name lines with no score anchor undergo crash-token recovery. `y_proximity` (or any other value) — fallback: group all OCR lines by vertical proximity then extract columns from each group. `column_scoped` — for screens that stack the score under the name in the same columns (the post-event mails); see *Pipeline stages* → `column_scoped`. |
 | `score_anchored.up_band_fraction` | Fraction of **image height** to search upward from the score token's top edge for associated name tokens. |
 | `score_anchored.down_band_fraction` | Fraction of image height to search downward from the score token's bottom edge (small — handles slight vertical misalignment between name and score OCR boxes). |
 | `y_proximity.tolerance_fraction` | Fraction of image height used as the vertical tolerance when grouping OCR lines into the same player row. |
 | `y_proximity.min_tolerance_px` | Minimum tolerance in pixels (prevents the tolerance from being too tight on small screens). |
-| `min_score` | Minimum integer value for a token to be treated as a score. Filters out rank numbers (1–100) and OCR noise. |
+| `min_score` | Minimum integer value for a token to be treated as a score. Filters out rank numbers (1–100) and OCR noise. `0` is allowed: a Zombie Siege row can score zero waves. |
 | `word_gap_fraction` | Horizontal gap between adjacent OCR bounding boxes, relative to image width, **above which** a space is inserted between name tokens. Gaps at or below this threshold result in direct concatenation (handles OCR splitting a single word across two boxes). |
+| `score_format` | `plain` (default) — a bare or comma-grouped integer. `suffixed` — a decimal with an optional `K`/`M`/`G`/`B` magnitude suffix (`23.36G`). |
+| `label_tokens` | Label text printed before each row's value (`Total Damage:`). Stripped before clustering, including from the front of a token. |
+| `column_scoped.up_band_fraction` / `.down_band_fraction` | `column_scoped` only: the row's score and rank are looked for from `down_band_fraction × H` above its name line to `up_band_fraction × H` below it. |
 | `min_word_gap_px` | Absolute minimum threshold in pixels, used when `word_gap_fraction * image_width` would be smaller (narrow screens). The effective threshold is `max(word_gap_fraction * width, min_word_gap_px)`. |
 
 ---
@@ -269,6 +277,20 @@ Every consumer MUST implement these stages, in this order, for every captured fr
 10. **Crash-token recovery.** Detect tokens matching `[a-zA-Z].*\d{1,3}(?:,\d{3})+$` (alpha + comma-grouped trailing integer); generate every valid split where the name prefix contains no comma. See the algorithm spec in *Name/score crash tokens* below.
 11. **Candidate disambiguation.** Pick one (name, score) per row using the priority order in *Name resolution* below. Emit the chosen pair (and optionally the candidates list — see *Output contract*).
 12. **Output.** Emit one `(player_name, score, category)` triple per row, plus the active screen `id` and tab `category`.
+
+**Rank (`type: rank` columns).** For `score_anchored`, a row's rank is the 1–999 integer token in the rank column whose centre lies within 0.012 × H of the score anchor's centre — on Strength and Alliance Contribution the rank digits sit up to 0.010 × H *below* the score, outside the name band. When no such token exists, the leading digits of the row's first name token (`48ShodiWarmic` → 48) are the rank. A rank that is neither read nor inferable from its neighbours is omitted, never guessed.
+
+#### `column_scoped`
+
+The post-event mails stack a row's values under its name, in the same x-range — Alliance Exercise prints `Total Damage: 23.36G` about 0.025 × H below the name, Desert Storm a bare integer about 0.020 × H below — so position alone cannot tell a name from a score. Stages 6, 8 and 9 run as follows instead, and none of the `score_anchored` name cleaning (leftward filter, crash tokens, tag and rank stripping) applies: names are returned as read, whitespace-collapsed, with only a leading `[TAG]` removed.
+
+1. **Boundaries.** The top is the bottom edge of the `boundaries.header` line, else `chrome.top_fraction`, else the image top. The bottom is the top edge of the `elements.timestamp` line, else `chrome.bottom_fraction`, else the image bottom. Tokens outside are dropped.
+2. **Labels.** Every `label_tokens` entry is stripped from the tokens, including from the front of a token; a token left empty is dropped.
+3. **Lines.** Tokens whose centre is in a name or score column are grouped into lines by vertical proximity (`y_proximity.tolerance_fraction`). A line made only of tokens in `score_format` is a **value line**; any other line in the name column is a **name line**.
+4. **Rows.** Each name line is a row. Its score is the value-line token in the score column whose centre is between `column_scoped.down_band_fraction × H` above the name line and `column_scoped.up_band_fraction × H` below it — the lowest such token when there is more than one. Its rank is the 1–999 integer in the rank column within the same band, else the name's leading digits.
+5. **Kept rows.** A row with a score is kept. A row with a rank but no score is kept with `score: 0` and `score_unread: true`, because the row exists and the caller must see it. A name line with neither is not a row (artwork text, a badge).
+6. **Fixed rows.** Each `elements.fixed_rows` entry is read from above the header: the last line carrying `value_label` gives the score (the score-format token after the label); the name is the nearest line above it that is neither a `skip_labels` line nor a bare number.
+7. **Timestamp.** The `elements.timestamp` line (`YYYY-M-D H:MM:SS`) is reported, normalised to `YYYY-MM-DD HH:MM:SS`.
 
 ### Pre-OCR enhancement
 

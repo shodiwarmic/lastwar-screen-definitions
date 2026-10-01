@@ -1,5 +1,5 @@
 id: strength_donation
-version: 2
+version: 3
 name: Strength Ranking — Donation
 description: >
   Strength Ranking screen with the Donation row-1 tab active. A second
@@ -65,7 +65,11 @@ tabs:
     - {id: donation_weekly, category: donation_weekly, signals: ["Weekly"], x_hint: 0.50}
 
 columns:
-  - {id: rank,  type: ignore, x_min: 0.00, x_max: 0.15}
+  # Rank gutter measured from the 169 OCR recordings (2026-09-30), on each
+  # recording's game window: rank digits span x 0.083–0.273 across the five
+  # screens (a token belongs to the column its x-centre falls in). The old
+  # 0.00–0.15 was never measured, and nothing read it.
+  - {id: rank,  type: rank,   x_min: 0.05, x_max: 0.26}
   - {id: name,  type: name,   x_min: 0.15, x_max: 0.60}
   - {id: score, type: score,  x_min: 0.60, x_max: 1.00}
 
