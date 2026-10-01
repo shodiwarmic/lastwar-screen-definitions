@@ -300,11 +300,69 @@ All values above (`border_coverage_threshold`, `sample_count`, `near_black_max_c
 
 **Reference implementation.** `lastwar-ocr-service/app/utils/window_detect.py` is the canonical Python implementation; the Android scanner currently does not implement stage 2 because its capture source (`MediaProjection`) always produces edge-to-edge frames in portrait orientation. If that changes (e.g. the scanner adds Fold landscape support), it must mirror the same constants.
 
+### Wire contract v1
+
+The HTTP contract between an OCR service (`lastwar-ocr-service`) and its caller (`lastwar-alliance-manager`). This section is its canonical text; each party keeps its own constant for the versions it speaks (`SCHEMA_VERSIONS` in the service, `ocrContractVersion` in the app). The definitions repository holds no constant, because the app does not vendor it.
+
+**Request — `POST /process-batch`**, `multipart/form-data`:
+
+| Field | Required | Meaning |
+|---|---|---|
+| `images` | yes, 1–100 | The frames, any format Pillow opens. |
+| `category` | no | A category from the service's catalog (see `/health`). When present, classification is skipped and every frame is read as this category. |
+| `schema_version` | no | One integer: the contract version the caller will parse. Absent means `1`. |
+
+**Response 200:**
+
+```json
+{
+  "schema_version": 1,
+  "results": {
+    "<category>": [
+      {"player_name": "ShodiWarmic", "score": 161528090, "rank": 48},
+      {"player_name": "Ruthless5432", "score": 1038000, "candidates": [ ... ]}
+    ]
+  },
+  "diagnostics": { ... },
+  "warning": "No player data could be extracted from the provided images."
+}
+```
+
+`results` maps each category read to its rows; a category with no rows is omitted. `warning` is present only when `results` is empty. A response with no `schema_version` is v1 by rule — every service released before the field existed spoke v1.
+
+**Response 4xx:** `{"error": "<human-readable message>"}`, plus a machine-readable `code` where one is defined below.
+
+**`GET /health`:** `200 {"status": "ok"}`, plus the fields below.
+
+#### Additions within v1
+
+Each of these is optional: a v1 caller must accept a response without it, and must ignore any field it does not know. None changes the meaning of an existing field, so none needs a version bump.
+
+| Where | Field | Meaning |
+|---|---|---|
+| response | `schema_version` | The version this response is written in. |
+| row | `rank` | The row's rank, read from the rank column, or from leading digits OCR merged into the name. Absent when neither was readable and it could not be inferred. |
+| row | `rank_inferred` | `true` when `rank` was not read but inferred from its read neighbours in the same section (the row sits in an unbroken run between them). Values are never repaired: a misread rank is reported as read. |
+| row | `score_unread` | `true` when the row's name and rank were read but its score cell was not (seen on Zombie Siege, where Cloud Vision drops a lone `0` wave count). `score` is then `0` and means "unknown", not zero. Only `column_scoped` screens emit it. |
+| diagnostics | `service_version`, `service_commit` | The release and commit of the service that answered. |
+| diagnostics section | `ranks` | `{read, from_name, inferred, expected_start, gaps, duplicates, out_of_order}` — the rank checksum for that frame (see `rank` columns). |
+| diagnostics section | `order_violations` | Rows whose score exceeds the row above (ties allowed). |
+| diagnostics section | `mail_timestamp` | The post-event mail's timestamp line, normalised to `YYYY-MM-DD HH:MM:SS`, in the capturing phone's local time. |
+| diagnostics section | `note` | New values: `no_rows_below_header` (the header was found but nothing below it, e.g. a collapsed list). |
+| 4xx | `code` | `schema_not_supported` (with `supported_versions`), `category_not_supported` (with `category`, `supported_categories`). |
+| `/health` | `version`, `commit`, `schema_versions`, `categories` | The release, its commit, the contract versions it speaks, and every category it reads. A service without `schema_versions` speaks `[1]` and reads the 23 ranking categories. |
+
+**Negotiation.** The caller reads `/health` first when it needs a capability (a category, a version), sends `schema_version` with the request, and parses only the version it asked for. A service that cannot answer in that version refuses with `400 {code: "schema_not_supported", supported_versions: [...]}` rather than answering in another one. The service never guesses.
+
+**Changing the contract.** An additive optional field is a minor service release and stays v1. Removing or changing the meaning of a field is v2: the service lists both versions in `schema_versions` for at least one release, and answers each caller in the version it asked for.
+
 ### Output contract
 
 Consumers choose between two equivalent payload shapes — both are accepted by `lastwar-alliance-manager`:
 
-**Shape A — server-resolved** (used by `lastwar-ocr-service`):
+#### Shape A — server-resolved
+
+Used by `lastwar-ocr-service`; this is the `results` object of the wire contract above.
 
 ```json
 {
@@ -323,9 +381,11 @@ Consumers choose between two equivalent payload shapes — both are accepted by 
 }
 ```
 
-The consumer picks `candidates[0]` (rightmost split, smallest score) as the default and emits all valid splits for the backend to disambiguate against the full alias engine. `candidates` is omitted when the row had no crash-token ambiguity. **`category_key` is always the active tab's `category` field** (e.g. `"friday"`, `"weekly"`, `"power"`, `"donation_daily"`, `"siege_daily"`) — never the screen `id` itself, since every shipped screen has at least one tab.
+The consumer picks `candidates[0]` (rightmost split, smallest score) as the default and emits all valid splits for the backend to disambiguate against the full alias engine. `candidates` is omitted when the row had no crash-token ambiguity. **`category_key` is the screen's wire category** — for a screen with a tab bar, the active tab's `category` field (e.g. `"friday"`, `"weekly"`, `"power"`, `"donation_daily"`, `"siege_daily"`); Never the screen `id` itself.
 
-**Shape B — client-resolved** (used by `lastwar-android-scanner`):
+#### Shape B — client-resolved
+
+Used by `lastwar-android-scanner`, which uploads to the app directly rather than through the OCR service:
 
 ```json
 {
@@ -373,11 +433,14 @@ When changing the schema or adding a screen:
 3. Update both consumers' submodule SHA in the same merge cycle. Recommended order: `screen-definitions` → `lastwar-alliance-manager` (if backend contract changed) → `lastwar-ocr-service` → `lastwar-android-scanner`. Each downstream PR pins to the new submodule SHA.
 4. Add a fixture screenshot to `lastwar-screenshots/` if the change affects parsing.
 
-### Screen `id` is the backend category key
+### Wire categories
 
-The `id` field in each screen YAML (e.g. `daily_ranking`, `alliance_contribution`) is the canonical category key the backend stores in `vs_points` / `power_history` / equivalent tables. Adding a new screen requires either matching an existing category or coordinating a new one with `lastwar-alliance-manager` in the same merge cycle.
+The screen `id` is a catalog key, not a category. The category a consumer emits — and the backend stores against — is derived from the definition:
 
-For multi-tab screens, the wire-format category is the tab winner's `category` (e.g. `"friday"`, `"siege_daily"`), not the screen `id`. The backend uses the tab category to look up the column to upsert.
+- **A screen with `tabs.groups`** (`alliance_contribution`): one category per combination of one item from each group, joined with `_` in group declaration order — `mutual_assistance_daily` … `defeat_season`, twelve in all.
+- **Any other screen with `tabs`**: each item's `category`, falling back to its `id`.
+
+That derivation gives today's 23: the six days, `weekly`, `power`, `kills`, `donation_daily`, `donation_weekly` and the twelve Alliance Contribution keys. Adding a screen adds its categories to every consumer that derives the set — the OCR service does — but the backend still has to know what to do with a new category, so a new one is coordinated with `lastwar-alliance-manager` in the same merge cycle.
 
 ### Cross-pair classification audit
 
