@@ -15,7 +15,14 @@ screens/
   strength_metrics.yaml       Strength Ranking — Power / Kills row-1 tabs
   strength_donation.yaml      Strength Ranking — Donation row-1 tab + Daily/Weekly sub-tabs
   season_contribution.yaml    Season Contribution Ranking (Mutual Assistance / Siege / Rare Soil War / Defeat)
+  mail_alliance_exercise.yaml "[Alliance Exercise] Alliance Reward" post-event mail
+  mail_zombie_siege.yaml      "Zombie Siege Report (Alliance)" post-event mail
+  mail_desert_storm.yaml      "[Desert Storm] Battle Results!" post-event mail
 ```
+
+The three mails were drawn from 1080x2404 and 1320x2868 captures (2026-09-27). They use the
+`column_scoped` strategy, and the OCR service reads them only when the caller names the
+category: its classifier never auto-detects a mail.
 
 ---
 
@@ -41,6 +48,15 @@ screens:
   - id: alliance_contribution
     file: screens/season_contribution.yaml
     priority: 5
+  - id: mail_alliance_exercise
+    file: screens/mail_alliance_exercise.yaml
+    priority: 6
+  - id: mail_zombie_siege
+    file: screens/mail_zombie_siege.yaml
+    priority: 7
+  - id: mail_desert_storm
+    file: screens/mail_desert_storm.yaml
+    priority: 8
 ```
 
 | Field | Description |
@@ -285,7 +301,7 @@ Every consumer MUST implement these stages, in this order, for every captured fr
 The post-event mails stack a row's values under its name, in the same x-range — Alliance Exercise prints `Total Damage: 23.36G` about 0.025 × H below the name, Desert Storm a bare integer about 0.020 × H below — so position alone cannot tell a name from a score. Stages 6, 8 and 9 run as follows instead, and none of the `score_anchored` name cleaning (leftward filter, crash tokens, tag and rank stripping) applies: names are returned as read, whitespace-collapsed, with only a leading `[TAG]` removed.
 
 1. **Boundaries.** The top is the bottom edge of the `boundaries.header` line, else `chrome.top_fraction`, else the image top. The bottom is the top edge of the `elements.timestamp` line, else `chrome.bottom_fraction`, else the image bottom. Tokens outside are dropped.
-2. **Labels.** Every `label_tokens` entry is stripped from the tokens, including from the front of a token; a token left empty is dropped.
+2. **Labels.** A token equal to a `label_tokens` entry is dropped; a label ending in `:` is also stripped from the front of a token (`Total Damage: 23.36G` → `23.36G`, for engines that return a whole line as one word). Labels are matched case-insensitively, longest first.
 3. **Lines.** Tokens whose centre is in a name or score column are grouped into lines by vertical proximity (`y_proximity.tolerance_fraction`). A line made only of tokens in `score_format` is a **value line**; any other line in the name column is a **name line**.
 4. **Rows.** Each name line is a row. Its score is the value-line token in the score column whose centre is between `column_scoped.down_band_fraction × H` above the name line and `column_scoped.up_band_fraction × H` below it — the lowest such token when there is more than one. Its rank is the 1–999 integer in the rank column within the same band, else the name's leading digits.
 5. **Kept rows.** A row with a score is kept. A row with a rank but no score is kept with `score: 0` and `score_unread: true`, because the row exists and the caller must see it. A name line with neither is not a row (artwork text, a badge).
@@ -331,7 +347,7 @@ The HTTP contract between an OCR service (`lastwar-ocr-service`) and its caller 
 | Field | Required | Meaning |
 |---|---|---|
 | `images` | yes, 1–100 | The frames, any format Pillow opens. |
-| `category` | no | A category from the service's catalog (see `/health`). When present, classification is skipped and every frame is read as this category. |
+| `category` | no | A category from the service's catalog (see `/health`). When present, classification is skipped and every frame is read as this category. Required for the post-event mails, which the classifier never auto-detects. |
 | `schema_version` | no | One integer: the contract version the caller will parse. Absent means `1`. |
 
 **Response 200:**
@@ -403,7 +419,7 @@ Used by `lastwar-ocr-service`; this is the `results` object of the wire contract
 }
 ```
 
-The consumer picks `candidates[0]` (rightmost split, smallest score) as the default and emits all valid splits for the backend to disambiguate against the full alias engine. `candidates` is omitted when the row had no crash-token ambiguity. **`category_key` is the screen's wire category** — for a screen with a tab bar, the active tab's `category` field (e.g. `"friday"`, `"weekly"`, `"power"`, `"donation_daily"`, `"siege_daily"`); Never the screen `id` itself.
+The consumer picks `candidates[0]` (rightmost split, smallest score) as the default and emits all valid splits for the backend to disambiguate against the full alias engine. `candidates` is omitted when the row had no crash-token ambiguity. **`category_key` is the screen's wire category** — for a screen with a tab bar, the active tab's `category` field (e.g. `"friday"`, `"weekly"`, `"power"`, `"donation_daily"`, `"siege_daily"`); for a screen without one, its top-level `category` (the three post-event mails). Never the screen `id` itself.
 
 #### Shape B — client-resolved
 
@@ -461,8 +477,9 @@ The screen `id` is a catalog key, not a category. The category a consumer emits 
 
 - **A screen with `tabs.groups`** (`alliance_contribution`): one category per combination of one item from each group, joined with `_` in group declaration order — `mutual_assistance_daily` … `defeat_season`, twelve in all.
 - **Any other screen with `tabs`**: each item's `category`, falling back to its `id`.
+- **A screen with no tab bar** (the post-event mails): its top-level `category`.
 
-That derivation gives today's 23: the six days, `weekly`, `power`, `kills`, `donation_daily`, `donation_weekly` and the twelve Alliance Contribution keys. Adding a screen adds its categories to every consumer that derives the set — the OCR service does — but the backend still has to know what to do with a new category, so a new one is coordinated with `lastwar-alliance-manager` in the same merge cycle.
+That derivation gives today's 26: the six days, `weekly`, `power`, `kills`, `donation_daily`, `donation_weekly`, the twelve Alliance Contribution keys, and `alliance_exercise`, `zombie_siege`, `desert_storm`. Adding a screen adds its categories to every consumer that derives the set — the OCR service does — but the backend still has to know what to do with a new category, so a new one is coordinated with `lastwar-alliance-manager` in the same merge cycle.
 
 ### Cross-pair classification audit
 
@@ -470,13 +487,18 @@ When adding a new screen, walk every existing screen and ask: *if the new screen
 
 The current state, with vulnerable cells marked **❌** (only the explicit `negative_signals` listed under the screen are considered — catalog priority alone is fragile because OCR noise can break the priority assumption):
 
-| Checked ↓  /  Real screen → | Strength Power/Kills | Strength Donation | Daily VS | Weekly VS | Alliance Contribution |
-|---|---|---|---|---|---|
-| **strength_donation** (P1) | ✅ "Daily Weekly" combo not present | ✅ matches | ✅ day-name negs reject | ✅ "Weekly Rank" neg rejects | ✅ "Alliance Contribution" neg rejects |
-| **strength_metrics** (P2) | ✅ matches | ✅ "Daily Weekly" combo neg rejects | ✅ day-name negs reject | ✅ "Weekly Rank" neg rejects | ✅ "Alliance Contribution" neg rejects |
-| **weekly_ranking** (P3) | ✅ "Strength" neg rejects | ✅ "Strength" neg rejects (and "Weekly Rank" page_signal not present anyway) | ✅ day-name negs reject | ✅ matches | ✅ "Alliance Contribution" neg rejects |
-| **daily_ranking** (P4) | ✅ "Daily Rank" not present (only "Daily" sub-tab) | ✅ "Daily Rank" not present | ✅ matches | ⚠ no `negative_signal` rejects, but `weekly_ranking` (P3) wins by priority | ✅ "Alliance Contribution" neg rejects |
-| **alliance_contribution** (P5) | ✅ "Alliance Contribution" text not present | ✅ same | ✅ same | ✅ same | ✅ matches |
+| Checked ↓  /  Real screen → | Strength Power/Kills | Strength Donation | Daily VS | Weekly VS | Alliance Contribution | AE mail | ZS mail | DS mail |
+|---|---|---|---|---|---|---|---|---|
+| **strength_donation** (P1) | ✅ "Daily Weekly" combo not present | ✅ matches | ✅ day-name negs reject | ✅ "Weekly Rank" neg rejects | ✅ "Alliance Contribution" neg rejects | ✅ "Strength Daily Weekly" not present | ✅ same | ✅ same |
+| **strength_metrics** (P2) | ✅ matches | ✅ "Daily Weekly" combo neg rejects | ✅ day-name negs reject | ✅ "Weekly Rank" neg rejects | ✅ "Alliance Contribution" neg rejects | ✅ "Strength Ranking" not present | ✅ same | ✅ same |
+| **weekly_ranking** (P3) | ✅ "Strength" neg rejects | ✅ "Strength" neg rejects (and "Weekly Rank" page_signal not present anyway) | ✅ day-name negs reject | ✅ matches | ✅ "Alliance Contribution" neg rejects | ✅ "Weekly Rank" not present | ✅ same | ✅ same |
+| **daily_ranking** (P4) | ✅ "Daily Rank" not present (only "Daily" sub-tab) | ✅ "Daily Rank" not present | ✅ matches | ⚠ no `negative_signal` rejects, but `weekly_ranking` (P3) wins by priority | ✅ "Alliance Contribution" neg rejects | ✅ "Daily Rank" not present | ✅ same | ✅ same |
+| **alliance_contribution** (P5) | ✅ "Alliance Contribution" text not present | ✅ same | ✅ same | ✅ same | ✅ matches | ✅ "Alliance Contribution" not present ("Alliance Exercise", "Alliance Reward" only) | ✅ not present ("Report (Alliance)" only) | ✅ not present |
+| **mail_alliance_exercise** (P6) | ✅ "Strength Ranking" neg rejects; "Alliance Reward" not present | ✅ same | ✅ "Daily Rank" neg rejects | ✅ "Weekly Rank" neg rejects | ✅ "Alliance Contribution" neg rejects | ✅ matches | ✅ "Alliance Reward" / "Damage Ranking" not present | ✅ not present |
+| **mail_zombie_siege** (P7) | ✅ "Strength Ranking" neg rejects; "Zombie Siege Report" not present | ✅ same | ✅ "Daily Rank" neg rejects | ✅ "Weekly Rank" neg rejects | ✅ "Alliance Contribution" neg rejects | ✅ "Zombie Siege Report" not present | ✅ matches | ✅ not present |
+| **mail_desert_storm** (P8) | ✅ "Strength Ranking" neg rejects; "Battle Results" not present | ✅ same | ✅ "Daily Rank" neg rejects | ✅ "Weekly Rank" neg rejects | ✅ "Alliance Contribution" neg rejects | ✅ "Battle Results" / "Individual Points" not present | ✅ not present | ✅ matches |
+
+The mails' page signals are multi-word and appear on no ranking screen, and each mail carries the four ranking page signals as `negative_signals`; a ranking screen's page signals appear on no mail. (The OCR service does not auto-detect mails at all — the caller always names the category — so these cells guard any consumer that does.)
 
 The single ⚠ cell (`daily_ranking` on a Weekly VS frame) is *covered by priority order, not by `negative_signals`*: weekly_ranking is checked first and matches cleanly on Weekly VS, so daily_ranking never gets evaluated. It would still match if weekly_ranking failed for some unrelated reason (e.g. OCR misread "Weekly Rank") — leaving the priority defence as a known soft spot worth recording rather than masking with a `negative_signal` that would also reject Daily VS (where "Weekly Rank" is also visible as the inactive period tab).
 

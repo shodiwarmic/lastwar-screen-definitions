@@ -1,0 +1,56 @@
+id: mail_zombie_siege
+version: 1
+name: "Zombie Siege Report (Alliance) mail"
+category: zombie_siege
+description: >
+  The post-event mail for Zombie Siege. A pinned summary (waves, stronghold
+  level, rewards) and a pinned "Ranking Commander Wave" header; about three
+  rows show per frame, so a board of 99 takes 33 frames. Each row is a rank,
+  the name with the commander's power below it, and the wave count at the
+  far right. Sorted by waves, then power: zero-wave rows come last and are
+  the ones that matter. Drawn from 1080x2404 and 1320x2868 captures
+  (2026-09-27).
+
+identification:
+  page_signals:
+    - "Zombie Siege Report"
+  negative_signals:
+    - "Strength Ranking"
+    - "Daily Rank"
+    - "Weekly Rank"
+    - "Alliance Contribution"
+  pre_ocr_hint: null
+
+boundaries:
+  header:
+    signals: ["Ranking Commander Wave"]
+    search_region: {y_min: 0.30, y_max: 0.60}
+  footer:
+    signals: []
+
+chrome:
+  top_fraction: 0.0
+  bottom_fraction: 0.0
+
+columns:
+  - {id: rank,  type: rank,  x_min: 0.05, x_max: 0.22}
+  # The power line under the name is a bare integer in this column; it is a
+  # value line outside the score column, so it is never a name or a score.
+  - {id: name,  type: name,  x_min: 0.28, x_max: 0.72}
+  - {id: score, type: score, x_min: 0.75, x_max: 1.00}
+
+row_clustering:
+  strategy: column_scoped
+  # The wave count centres ~0.014 H below the name, the rank ~0.017 H.
+  column_scoped: {up_band_fraction: 0.020, down_band_fraction: 0.004}
+  y_proximity: {tolerance_fraction: 0.008, min_tolerance_px: 8}
+  min_score: 0
+  score_format: plain
+  # Words in a mail name sit ~10 px apart, while Cloud Vision splits a tag
+  # from its name ("[", "PoWr", "]", "Boom") with gaps of 0-2 px.
+  word_gap_fraction: 0.005
+  min_word_gap_px: 4
+
+elements:
+  timestamp:
+    search_region: {y_min: 0.80, y_max: 1.0}
