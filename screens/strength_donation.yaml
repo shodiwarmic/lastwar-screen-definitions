@@ -1,5 +1,5 @@
 id: strength_donation
-version: 3
+version: 4
 name: Strength Ranking — Donation
 description: >
   Strength Ranking screen with the Donation row-1 tab active. A second
@@ -75,8 +75,18 @@ columns:
 
 row_clustering:
   strategy: score_anchored
-  score_anchored: {up_band_fraction: 0.021, down_band_fraction: 0.002}
+  # down_band 0.006, not the shared 0.002: on this screen a name's centre
+  # sits up to 0.0045 × H below its score's, and the OCR service tests the
+  # centre (the contract's overlap test would not need this). At 0.002 the
+  # ten Donation recordings (three Pixel Fold layouts, 2026-04-22) dropped 25
+  # of their 60 rows and cut 14 more names short; at 0.006 all 60 read.
+  # The rows carry no alliance subtitle for a wider band to pull in.
+  score_anchored: {up_band_fraction: 0.021, down_band_fraction: 0.006}
   y_proximity: {tolerance_fraction: 0.02, min_tolerance_px: 20}
-  min_score: 1000
+  # Donation points can be below 1,000 (a pinned self-row reads 950), and they
+  # print without thousands separators. 101 keeps the rank gutter (1–100, an
+  # alliance holds at most 100) out of the anchors; a member on 0–100 points
+  # still does not read.
+  min_score: 101
   word_gap_fraction: 0.015
   min_word_gap_px: 8
